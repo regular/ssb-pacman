@@ -5,6 +5,9 @@ if [ $# -lt 4 ]; then
   echo "Usage: $0 ARCH REPO URL"
 fi
 
+cache=$(dirname $(sbot config|jsonpath-dl config) )/pacman-cache
+mkdir -p $cache
+tmp=$(mktemp -d)
 arch=$1
 repo=$2
 file=$arch-$repo.db.tar.gz
@@ -13,15 +16,15 @@ file=$arch-$repo.db.tar.gz
 base_url=$3
 url=$base_url/$repo.db.tar.gz
 
-etag=$(grep "< ETag:" <(curl -vL -z $file -o $file $url 2>&1) | cut '-d ' -f3 | tr -d "\"\r" )
+etag=$(grep "< ETag:" <(curl -vL -z $cache/$file -o $cache/$file $url 2>&1) | cut '-d ' -f3 | tr -d "\"\r" )
 
-if [ "$(cat $arch-$repo-etag || echo "n/a")" == "$etag" ]; then
+if [ "$(cat $cache/$arch-$repo-etag || echo "n/a")" == "$etag" ]; then
   echo "Nothing to do" >&2
   exit 0
 fi
 
-rm -rf $arch-$repo || true
-mkdir $arch-$repo
-tar -xz -C $arch-$repo -f $file
-sbot pacman.import $(realpath $arch-$repo) --arch $arch --repo $repo --url "$base_url"
-echo -n $etag > $arch-$repo-etag
+rm -rf $tmp/$arch-$repo || true
+mkdir -p $tmp/$arch-$repo
+tar -xz -C $tmp/$arch-$repo -f $cache/$file
+sbot pacman.import $(realpath $tmp/$arch-$repo) --arch $arch --repo $repo --url "$base_url"
+echo -n $etag > $cache/$arch-$repo-etag
