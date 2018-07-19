@@ -71,7 +71,7 @@ module.exports = function(ssb) {
       pull.values(pkgs),
       //pull.take(2),
       pull.asyncMap( (name, cb) => {
-        ssb.pacman.get(name, opts, err => {
+        ssb.pacman.get(name, Object.assign({values: false, keys: false, seqs: false}, opts), err => {
           if (err) return cb(null, name)
           cb(null, null) // we have it already, filter this
         })

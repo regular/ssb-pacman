@@ -22,7 +22,7 @@ exports.manifest = {
 exports.init = function (ssb, config) {
   const ret = {}
   const importIfNew = ImportIfNew(ssb)
-  const index = ssb._flumeUse('pacmanIndex', createIndex(4, function(kv) {
+  const index = ssb._flumeUse('pacmanIndex', createIndex(6, function(kv) {
     const c = kv.value && kv.value.content
     const name = c && c.name
     const arch = c && c.arch
@@ -99,16 +99,26 @@ exports.init = function (ssb, config) {
     opts = opts || {}
     const arch = opts && opts.arch
     const repo = opts && opts.repo
-    if (!name || !arch || !repo) throw new Error('Required options: --arch, --repo')
+    if (!name || !arch) throw new Error('Required arguments: NAME --arch')
     const key = makeKey(arch, repo, name)
-    index.get(key, cb)
+    console.log(key)
+    pull(
+      index.read(Object.assign({keys: false, values: true, seqs: false}, opts, {gte: key, lt: key + '}' })),
+      pull.take(1),
+      pull.collect( (err, results) => {
+        if (err) return cb(err)
+        if (results.length == 0) return cb(new Error(`Package not found: ${name}`))
+        cb(null, results[0])
+      })
+    )
   }
   
   ret.versions = function(base, opts) {
     opts = opts || {}
     return pull(
       index.read(Object.assign({keys: true, values: false}, opts, {gte: base + '|', lt: base + '}' })),
-      pull.map( o => o.key )
+      pull.map( o => o.key ),
+      pull.map( parseDetailKey )
     )
   }
 
@@ -123,7 +133,7 @@ exports.init = function (ssb, config) {
 }
 
 function makeKey(arch, repo, name) {
-  return `${arch}|${repo}|${name}`
+  return `${arch}|${name}|${repo || ''}`
 }
 
 function makeDetailKeys(arch, repo, files) {
@@ -131,7 +141,14 @@ function makeDetailKeys(arch, repo, files) {
     if (!desc) return []
     const content = getFileContent(desc)
     const p = parseFile(content)
-    return [`${p.BASE}|${p.NAME}|${p.VERSION}|${repo}|${arch}|${p.CSIZE}|${p.BUILDDATE}`]
+    return [`${p.BASE || p.NAME}|${p.NAME}|${p.VERSION}|${arch}|${repo}|${p.CSIZE}|${p.ISIZE}|${p.BUILDDATE}`]
+}
+
+function parseDetailKey(k) {
+  const [base, name, version, arch, repo, csize, isize, builddate] = k.split('|')
+  return {
+    base, name, version, arch, repo, csize, isize, builddate
+  }
 }
 
 function getFileContent(file) {
