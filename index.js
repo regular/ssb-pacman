@@ -15,19 +15,23 @@ exports.manifest = {
   'import': 'source',
   versions: 'source',
   stats: 'async',
-  get: 'async'
+  get: 'async',
+  updates: 'source'
 }
 
 exports.init = function (ssb, config) {
   const ret = {}
   const importIfNew = ImportIfNew(ssb)
-  const index = ssb._flumeUse('pacmanIndex', createIndex(2, function(kv) {
+  const index = ssb._flumeUse('pacmanIndex', createIndex(4, function(kv) {
     const c = kv.value && kv.value.content
     const name = c && c.name
     const arch = c && c.arch
     const repo = c && c.repo
     if (!name || !arch || !repo) return []
-    return [makeKey(arch, repo, name)]
+    return [
+      makeKey(arch, repo, name),
+      ... makeDetailKeys(arch, repo, c.files || [])
+    ]
   }))
 
   const reduce = ssb._flumeUse('pacmanReduce', createReduce(4, {
@@ -100,13 +104,16 @@ exports.init = function (ssb, config) {
     index.get(key, cb)
   }
   
-  ret.versions = function(name, opts) {
+  ret.versions = function(base, opts) {
     opts = opts || {}
-    const arch = opts && opts.arch
-    const repo = opts && opts.repo
-    if (!name || !arch || !repo) throw new Error('Required options: --arch, --repo')
-    const key = makeKey(arch, repo, name)
-    return index.read(Object.assign({keys: true, values: false}, opts, {gte: key + '-', lt: key + '.'}))
+    return pull(
+      index.read(Object.assign({keys: true, values: false}, opts, {gte: base + '|', lt: base + '}' })),
+      pull.map( o => o.key )
+    )
+  }
+
+  ret.updates = function(opts) {
+    return index.read(Object.assign({live: true, old: false}, opts))
   }
 
   ret.import = function(repopath, opts, cb) {
@@ -117,6 +124,14 @@ exports.init = function (ssb, config) {
 
 function makeKey(arch, repo, name) {
   return `${arch}|${repo}|${name}`
+}
+
+function makeDetailKeys(arch, repo, files) {
+    const desc = files.find( f => f.name == 'desc')
+    if (!desc) return []
+    const content = getFileContent(desc)
+    const p = parseFile(content)
+    return [`${p.BASE}|${p.NAME}|${p.VERSION}|${repo}|${arch}|${p.CSIZE}|${p.BUILDDATE}`]
 }
 
 function getFileContent(file) {

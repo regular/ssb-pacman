@@ -1,7 +1,7 @@
 #!/usr/bin/bash
-set -eux
+set -eux -o pipefail
 
-if [ $# -lt 4 ]; then
+if [ $# -lt 3 ]; then
   echo "Usage: $0 ARCH REPO URL"
 fi
 
@@ -10,13 +10,33 @@ mkdir -p $cache
 tmp=$(mktemp -d)
 arch=$1
 repo=$2
+lockfile=$cache/$arch-$repo.lock
+[[ -e $lockfile ]] && echo "Already running" && exit 1
+
+# See https://unix.stackexchange.com/questions/57940/trap-int-term-exit-really-necessary
+cleanup() {
+  err=$?
+  rm $lockfile
+  trap '' EXIT INT TERM
+  exit $err
+}
+
+sig_cleanup() {
+  trap '' EXIT # some shells will call EXIT after the INT handler
+  false # sets $?
+  cleanup
+}
+trap cleanup EXIT
+trap sig_cleanup INT QUIT TERM
+
+touch $lockfile
 file=$arch-$repo.db.tar.gz
 ## NOTE: none of the (working) mirrors support https!
 ## Thus, the list of packages cannot be trusted (it is not signed)
 base_url=$3
 url=$base_url/$repo.db.tar.gz
-
-etag=$(grep "< ETag:" <(curl -vL -z $cache/$file -o $cache/$file $url 2>&1) | cut '-d ' -f3 | tr -d "\"\r" )
+tempfile=$(mktemp -u)
+etag=$(grep "< ETag:" <(curl -vL -z $cache/$file -o $tempfile $url 2>&1 && mv $tempfile $cache/$file ) | cut '-d ' -f3 | tr -d "\"\r" )
 
 if [ "$(cat $cache/$arch-$repo-etag || echo "n/a")" == "$etag" ]; then
   echo "Nothing to do" >&2
@@ -26,5 +46,4 @@ fi
 rm -rf $tmp/$arch-$repo || true
 mkdir -p $tmp/$arch-$repo
 tar -xz -C $tmp/$arch-$repo -f $cache/$file
-sbot pacman.import $(realpath $tmp/$arch-$repo) --arch $arch --repo $repo --url "$base_url"
-echo -n $etag > $cache/$arch-$repo-etag
+sbot pacman.import $(realpath $tmp/$arch-$repo) --arch $arch --repo $repo --url "$base_url" --num_downloads 2 && echo -n $etag > $cache/$arch-$repo-etag
