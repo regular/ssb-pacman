@@ -16,23 +16,26 @@ exports.manifest = {
   versions: 'source',
   stats: 'async',
   get: 'async',
-  updates: 'source'
+  updates: 'source',
+  dependencies: 'source'
 }
 
 exports.init = function (ssb, config) {
   const ret = {}
   const importIfNew = ImportIfNew(ssb)
-  const index = ssb._flumeUse('pacmanIndex', createIndex(6, function(kv) {
-    const c = kv.value && kv.value.content
-    const name = c && c.name
-    const arch = c && c.arch
-    const repo = c && c.repo
-    if (!name || !arch || !repo) return []
-    return [
-      makeKey(arch, repo, name),
-      ... makeDetailKeys(arch, repo, c.files || [])
-    ]
-  }))
+  const index = ssb._flumeUse('pacmanIndex', createIndex(
+    10, function(kv) {
+      const c = kv.value && kv.value.content
+      const name = c && c.name
+      const arch = c && c.arch
+      const repo = c && c.repo
+      if (!name || !arch || !repo) return []
+      return [
+        makeKey(arch, repo, name),
+        ... makeDetailKeys(arch, repo, c.files || [])
+      ]
+    }
+  ))
 
   const reduce = ssb._flumeUse('pacmanReduce', createReduce(4, {
     initial: {stats: {}},
@@ -122,6 +125,36 @@ exports.init = function (ssb, config) {
     )
   }
 
+  ret.dependencies = function(opts) {
+    opts = opts || {}
+    const name = opts.name
+    const version = opts.version
+    const arch = opts.arcn
+
+    const gt = ['DEP']
+    if (name) {
+      gt.push(name)
+      if (version) {
+        gt.push(version)
+        if (arch) gt.push(arch)
+      }
+    }
+    const lt = gt.slice()
+    gt.push(null) 
+    lt.push(undefined)
+
+    return pull(
+      index.read(Object.assign({
+        values: false,
+        seqs: false,
+        keys: true
+      }, opts, {
+        gt, lt
+      })),
+      pull.map( k => k.slice(-1)[0] )
+    )
+  }
+
   ret.updates = function(opts) {
     return index.read(Object.assign({live: true, old: false}, opts))
   }
@@ -137,11 +170,17 @@ function makeKey(arch, repo, name) {
 }
 
 function makeDetailKeys(arch, repo, files) {
-    const desc = files.find( f => f.name == 'desc')
-    if (!desc) return []
-    const content = getFileContent(desc)
+    const content = files.map( getFileContent ).join('\n')
     const p = parseFile(content)
-    return [`${p.BASE || p.NAME}|${p.NAME}|${p.VERSION}|${arch}|${repo}|${p.CSIZE}|${p.ISIZE}|${p.BUILDDATE}`]
+    const deps = ary(p.DEPENDS || []).map( d => [
+      'DEP', 
+      p.NAME,
+      p.VERSION, 
+      arch, 
+      d
+    ])
+
+    return [`${p.BASE || p.NAME}|${p.NAME}|${p.VERSION}|${arch}|${repo}|${p.CSIZE}|${p.ISIZE}|${p.BUILDDATE}`, ... deps]
 }
 
 function parseDetailKey(k) {
@@ -159,3 +198,8 @@ function getFileContent(file) {
   } else if (file.compression) throw new Error('unsupported file compression: ' + file.compression)
   return content.toString()
 }
+
+function ary(x) {
+  return Array.isArray(x) ? x : [x]
+}
+
