@@ -2,6 +2,7 @@ console.log('HELLO!')
 const zlib = require('zlib')
 
 const pull = require('pull-stream')
+const many = require('pull-many')
 const createIndex = require('flumeview-level')
 const createReduce = require('flumeview-reduce')
 const hs = require('human-size')
@@ -125,9 +126,10 @@ exports.init = function (ssb, config) {
     )
   }
 
-  ret.dependencies = function(opts) {
+  ret.dependencies = transitiveDependenciesOf //directDependenciesOf;
+    
+  function directDependenciesOf(name, opts) {
     opts = opts || {}
-    const name = opts.name
     const version = opts.version
     const arch = opts.arcn
 
@@ -151,7 +153,34 @@ exports.init = function (ssb, config) {
       }, opts, {
         gt, lt
       })),
-      pull.map( k => k.slice(-1)[0] )
+      pull.map( k => k.slice(-1)[0] ),
+      pull.unique(),
+      pull.map(parseDependencySpec)
+    )
+  }
+
+  function transitiveDependenciesOf(name, opts) {
+    const seen = {}
+
+    function _transDepsOf(name, level, opts) {
+      if (seen[name]) return pull.empty()
+      seen[name] = true
+      
+      return pull(
+        directDependenciesOf(name, opts),
+        pull.through( d => d.distance = level ),
+        pull.map( d => many([
+          pull.once(d),
+          _transDepsOf(d.name, level + 1, opts)
+        ])),
+        pull.flatten()
+      )
+    }
+
+    return pull(
+      _transDepsOf(name, 1, opts),
+      pull.through(console.log),
+      pull.unique(d => `${d.name}`)
     )
   }
 
@@ -203,3 +232,10 @@ function ary(x) {
   return Array.isArray(x) ? x : [x]
 }
 
+
+function parseDependencySpec(spec) {
+  const m = spec.match(/^(.+?)(([=><]{1,2})(.+))?$/)
+  if (!m) return null
+  const [all, name, comparison, operator, operand] = m
+  return {name, operator, operand}
+}
