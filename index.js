@@ -1,8 +1,10 @@
 console.log('HELLO!')
 const zlib = require('zlib')
+const crypto = require('crypto')
 
 const pull = require('pull-stream')
 const many = require('pull-many')
+const sort = require('pull-sort')
 const createIndex = require('flumeview-level')
 const createReduce = require('flumeview-reduce')
 const hs = require('human-size')
@@ -18,14 +20,16 @@ exports.manifest = {
   stats: 'async',
   get: 'async',
   updates: 'source',
-  dependencies: 'source'
+  dependencies: 'source',
+  providers: 'source',
+  sha256: 'async'
 }
 
 exports.init = function (ssb, config) {
   const ret = {}
   const importIfNew = ImportIfNew(ssb)
   const index = ssb._flumeUse('pacmanIndex', createIndex(
-    10, function(kv) {
+    11, function(kv) {
       const c = kv.value && kv.value.content
       const name = c && c.name
       const arch = c && c.arch
@@ -73,6 +77,31 @@ exports.init = function (ssb, config) {
     }
   }))
 
+  ret.sha256 = function(name, opts, cb) {
+    ret.get(name, opts, (err, {value}) => {
+      if (err) return cb(err)
+      const p = parseFiles(value.content.files)
+      const expectedSHA = p.SHA256SUM
+
+      pull(
+        ssb.blobs.get(value.content.blob),
+        pull.reduce(
+          (hash, buf)  => hash.update(buf),
+          crypto.createHash('sha256'),
+          (err, hash) =>{
+            const actualSHA = hash.digest('hex')
+            if (err) return cb(err)
+            cb(null, {
+              actualSHA,
+              expectedSHA,
+              matches: actualSHA == expectedSHA
+            })
+          }
+        )
+      )
+    })
+  }
+
   ret.stats = function(opts, cb) {
     opts = opts || {}
     reduce.get(opts, (err, view) => {
@@ -100,17 +129,18 @@ exports.init = function (ssb, config) {
   }
 
   ret.get = function(name, opts, cb) {
+    if (typeof opts == 'function') {cb = opts; opts = {} }
     opts = opts || {}
     const arch = opts && opts.arch
     const repo = opts && opts.repo
     if (!name || !arch) throw new Error('Required arguments: NAME --arch')
     const key = makeKey(arch, repo, name)
-    console.log(key)
     pull(
       index.read(Object.assign({keys: false, values: true, seqs: false}, opts, {gte: key, lt: key + '}' })),
       pull.take(1),
       pull.collect( (err, results) => {
         if (err) return cb(err)
+        console.log(results)
         if (results.length == 0) return cb(new Error(`Package not found: ${name}`))
         cb(null, results[0])
       })
@@ -131,7 +161,7 @@ exports.init = function (ssb, config) {
   function directDependenciesOf(name, opts) {
     opts = opts || {}
     const version = opts.version
-    const arch = opts.arcn
+    const arch = opts.arch
 
     const gt = ['DEP']
     if (name) {
@@ -160,11 +190,17 @@ exports.init = function (ssb, config) {
   }
 
   function transitiveDependenciesOf(name, opts) {
+    opts = opts || {}
     const seen = {}
 
     function _transDepsOf(name, level, opts) {
-      if (seen[name]) return pull.empty()
-      seen[name] = true
+      // record the highest level at which we've seen a package
+      // (this determines installation order. (breadth first)
+      if (seen[name]) {
+        seen[name] = Math.max(seen[name], level)
+        return pull.empty()
+      }
+      seen[name] = level
       
       return pull(
         directDependenciesOf(name, opts),
@@ -177,15 +213,68 @@ exports.init = function (ssb, config) {
       )
     }
 
-    return pull(
+    const trans_deps = pull(
       _transDepsOf(name, 1, opts),
       pull.through(console.log),
       pull.unique(d => `${d.name}`)
+      // TODO: resolve abstract/servicenames (like "sh")
+      // TODO: get versions for concrete packages and pick a candidate (resolve dep specs)
+    )
+
+    if (!opts.sort) return trans_deps
+    return pull(
+      pull.once('not relevant'),
+      pull.asyncMap( (_, cb) => {
+        pull(trans_deps, pull.collect( err => {
+          if (err) return cb(err)
+          cb(null, Object.entries(seen))
+        }))
+      }),
+      pull.flatten(),
+      pull.map( ([name, level]) => ({name, level}) ),
+      sort( (a, b) => b.level - a.level )
     )
   }
 
   ret.updates = function(opts) {
     return index.read(Object.assign({live: true, old: false}, opts))
+  }
+
+  ret.providers = function(servicename, opts) {
+    opts = opts || {}
+    const arch = opts.arch
+    const name = opts.name
+    const version = opts.version
+
+    const gt = ['PROV']
+    if (servicename) {
+      gt.push(servicename)
+      console.log('arch', arch)
+      if (arch) {
+        gt.push(arch)
+        if (name) {
+          gt.push(name)
+          if (version) {
+            gt.push(version)
+          }
+        }
+      }
+    }
+    const lt = gt.slice()
+    gt.push(null) 
+    lt.push(undefined)
+
+    console.log(gt)
+
+    return pull(
+      index.read(Object.assign({
+        values: false,
+        seqs: false,
+        keys: true
+      }, opts, {
+        gt, lt
+      }))
+    )
   }
 
   ret.import = function(repopath, opts, cb) {
@@ -198,9 +287,13 @@ function makeKey(arch, repo, name) {
   return `${arch}|${name}|${repo || ''}`
 }
 
+function parseFiles(files) {
+  const content = files.map( getFileContent ).join('\n')
+  return parseFile(content)
+}
+
 function makeDetailKeys(arch, repo, files) {
-    const content = files.map( getFileContent ).join('\n')
-    const p = parseFile(content)
+    const p = parseFiles(files)
     const deps = ary(p.DEPENDS || []).map( d => [
       'DEP', 
       p.NAME,
@@ -209,7 +302,19 @@ function makeDetailKeys(arch, repo, files) {
       d
     ])
 
-    return [`${p.BASE || p.NAME}|${p.NAME}|${p.VERSION}|${arch}|${repo}|${p.CSIZE}|${p.ISIZE}|${p.BUILDDATE}`, ... deps]
+    const provides = ary(p.PROVIDES || []).map( d => [
+      'PROV', 
+      d,
+      arch, 
+      p.NAME,
+      p.VERSION
+    ])
+
+    return [
+      `${p.BASE || p.NAME}|${p.NAME}|${p.VERSION}|${arch}|${repo}|${p.CSIZE}|${p.ISIZE}|${p.BUILDDATE}`,
+      ...deps,
+      ...provides
+    ]
 }
 
 function parseDetailKey(k) {
