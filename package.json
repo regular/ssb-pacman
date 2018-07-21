@@ -17,6 +17,7 @@
     "pull-many": "^1.0.8",
     "pull-paramap": "^1.2.2",
     "pull-sort": "^1.0.1",
+    "pull-spawn-process": "^0.3.0",
     "pull-split": "^0.2.0",
     "pull-stream": "^3.6.8",
     "ssb-client": "^4.5.7",
