@@ -1,6 +1,6 @@
-console.log('HELLO!')
 const zlib = require('zlib')
 const crypto = require('crypto')
+const url = require('url')
 
 const pull = require('pull-stream')
 const many = require('pull-many')
@@ -29,15 +29,16 @@ exports.init = function (ssb, config) {
   const ret = {}
   const importIfNew = ImportIfNew(ssb)
   const index = ssb._flumeUse('pacmanIndex', createIndex(
-    14, function(kv) {
+    15, function(kv) {
       const c = kv.value && kv.value.content
       const name = c && c.name
       const arch = c && c.arch
       const repo = c && c.repo
+      const blob = c && c.blob
       if (!name || !arch || !repo) return []
       return [
         makeKey(arch, repo, name),
-        ... makeDetailKeys(arch, repo, c.files || [])
+        ... makeDetailKeys(arch, repo, c.files || [], blob)
       ]
     }
   ))
@@ -76,6 +77,24 @@ exports.init = function (ssb, config) {
       return acc
     }
   }))
+
+  ssb.ws.use(function (req, res, next) {
+    if(!(req.method === "GET" || req.method == 'HEAD')) return next()
+    const u = url.parse('http://makeurlparseright.com'+req.url)
+    const m = u.pathname.match(/^\/archlinux\/([^\/]+)\/([^\/]+)\/(.+)$/)
+    if (!m) return next()
+    const [_, repo, arch, filename] = m
+
+    console.log('HTTP', repo, arch, filename)
+    index.get(['RAF', repo, arch, filename], (err, kv) => {
+      if (err) return res.end('Not found', 404)
+      const blob = kv.value && kv.value.content && kv.value.content.blob
+      req.url = `/blobs/get/${encodeURIComponent(blob)}`
+      //res.end(JSON.stringify(kv, null, 2))    
+      next()
+    })
+  })
+
 
   ret.sha256 = function(name, opts, cb) {
     ret.get(name, opts, (err, {value}) => {
@@ -287,7 +306,7 @@ function parseFiles(files) {
   return parseFile(content)
 }
 
-function makeDetailKeys(arch, repo, files) {
+function makeDetailKeys(arch, repo, files, blob) {
     const p = parseFiles(files)
     const deps = ary(p.DEPENDS || []).map( d => [
       'DEP', 
@@ -307,6 +326,7 @@ function makeDetailKeys(arch, repo, files) {
 
     return [
       ['NAVR', p.NAME, p.ARCH, p.VERSION, repo, p.CSIZE, p.ISIZE, p.BUILDDATE, p.SHA256SUM],
+      ['RAF', repo, arch, p.FILENAME],
       ...deps,
       ...provides
     ]
