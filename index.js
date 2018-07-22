@@ -29,7 +29,7 @@ exports.init = function (ssb, config) {
   const ret = {}
   const importIfNew = ImportIfNew(ssb)
   const index = ssb._flumeUse('pacmanIndex', createIndex(
-    11, function(kv) {
+    14, function(kv) {
       const c = kv.value && kv.value.content
       const name = c && c.name
       const arch = c && c.arch
@@ -147,12 +147,16 @@ exports.init = function (ssb, config) {
     )
   }
   
-  ret.versions = function(base, opts) {
+  ret.versions = function(name, opts) {
     opts = opts || {}
+    const {gt, lt} = query('NAVR', [
+      name, opts.arch, opts.version, opts.repo
+    ])
     return pull(
-      index.read(Object.assign({keys: true, values: false}, opts, {gte: base + '|', lt: base + '}' })),
+      index.read(Object.assign({keys: true, values: false}, opts, {gt, lt} )),
       pull.map( o => o.key ),
-      pull.map( parseDetailKey )
+      pull.map( parseNAVRKey ),
+      pull.unique( o => o.sha256 )
     )
   }
 
@@ -163,17 +167,9 @@ exports.init = function (ssb, config) {
     const version = opts.version
     const arch = opts.arch
 
-    const gt = ['DEP']
-    if (name) {
-      gt.push(name)
-      if (version) {
-        gt.push(version)
-        if (arch) gt.push(arch)
-      }
-    }
-    const lt = gt.slice()
-    gt.push(null) 
-    lt.push(undefined)
+    const {gt, lt} = query('DEP', [
+      name, version, arch
+    ])
 
     return pull(
       index.read(Object.assign({
@@ -217,7 +213,7 @@ exports.init = function (ssb, config) {
       _transDepsOf(name, 1, opts),
       pull.through(console.log),
       pull.unique(d => `${d.name}`)
-      // TODO: resolve abstract/servicenames (like "sh")
+      // TODO: resolve abstract/provision (like "sh")
       // TODO: get versions for concrete packages and pick a candidate (resolve dep specs)
     )
 
@@ -240,31 +236,18 @@ exports.init = function (ssb, config) {
     return index.read(Object.assign({live: true, old: false}, opts))
   }
 
-  ret.providers = function(servicename, opts) {
+  ret.providers = function(provision, opts) {
     opts = opts || {}
     const arch = opts.arch
     const name = opts.name
     const version = opts.version
 
-    const gt = ['PROV']
-    if (servicename) {
-      gt.push(servicename)
-      console.log('arch', arch)
-      if (arch) {
-        gt.push(arch)
-        if (name) {
-          gt.push(name)
-          if (version) {
-            gt.push(version)
-          }
-        }
-      }
-    }
-    const lt = gt.slice()
-    gt.push(null) 
-    lt.push(undefined)
-
-    console.log(gt)
+    const {gt, lt} = query('PROV', [
+      provision,
+      arch,
+      name,
+      version
+    ])
 
     return pull(
       index.read(Object.assign({
@@ -281,6 +264,18 @@ exports.init = function (ssb, config) {
     return importIfNew(repopath, opts, cb)
   }
   return ret
+}
+
+function query(indexName, values) {
+  const gt = [indexName]
+  for(let i=0; i<values.length; ++i) {
+    if (typeof values[i] == 'undefined') break
+    gt.push(values[i])
+  }
+  const lt = gt.slice()
+  gt.push(null) 
+  lt.push(undefined)
+  return {lt, gt}
 }
 
 function makeKey(arch, repo, name) {
@@ -311,16 +306,16 @@ function makeDetailKeys(arch, repo, files) {
     ])
 
     return [
-      `${p.BASE || p.NAME}|${p.NAME}|${p.VERSION}|${arch}|${repo}|${p.CSIZE}|${p.ISIZE}|${p.BUILDDATE}`,
+      ['NAVR', p.NAME, p.ARCH, p.VERSION, repo, p.CSIZE, p.ISIZE, p.BUILDDATE, p.SHA256SUM],
       ...deps,
       ...provides
     ]
 }
 
-function parseDetailKey(k) {
-  const [base, name, version, arch, repo, csize, isize, builddate] = k.split('|')
+function parseNAVRKey(k) {
+  const [_, name, arch, version, repo, csize, isize, builddate, sha256] = k
   return {
-    base, name, version, arch, repo, csize, isize, builddate
+    name, version, arch, repo, csize, isize, builddate, sha256
   }
 }
 
