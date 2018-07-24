@@ -1,0 +1,51 @@
+gpgdir="$HOME/.ssb-pacman/gpg"
+pmkey="pacman-key --gpgdir $gpgdir"
+gpg="gpg --homedir $gpgdir"
+exit 0
+
+sudo $pmkey --init 
+sudo chown -R $USER $gpgdir
+chmod 700 $gpgdir
+
+$gpg --list-keys
+
+
+# to sign: $gpg --output doc.sig --detach-sig doc
+# to check: $gpg --verify doc.sig doc
+
+# This script generates archlinux-keyring.gpg
+# https://git.archlinux.org/archlinux-keyring.git/tree/update-keys
+# 
+# - It gerneates a "Arch Linux Keyring Keychain Master Key"
+# - takes a list of master keys and locally signs them with the keychain master key
+# these keys are then collected in archlinux-trusted
+# and the trust level is set to 4
+# echo "${keyid}:4:" >> archlinux-trusted
+# this file is then imported as ownertrust
+# ${GPG} --import-ownertrust < archlinux-trusted
+
+# - takes a list of packager keyids and exports them only if theu are fully trusted 
+# if ! ${GPG} --list-keys --with-colons ${keyid} 2>/dev/null | grep -q '^pub:f:'; then
+#		echo "key is not fully trusted: ${keyid} ${username}"
+
+
+# ----- pacman-key --populate
+# See https://git.archlinux.org/pacman.git/tree/scripts/pacman-key.sh.in
+
+# a signing key is generated if none exists
+# archlinux.gpg is imported into the keyring
+# keys from archlinux-trused are locally signed
+
+# we cannot use --yes here as gpg would still ask for confirmation if a key has more than one uid
+		printf 'y\ny\n' | LANG=C "${GPG_PACMAN[@]}" --command-fd 0 --quiet --batch --lsign-key "${key_id}" 2>/dev/null
+		if (( PIPESTATUS[1] )); then
+			error "$(gettext "%s could not be locally signed.")" "${key_id}"
+			ret=1
+		fi
+
+# the same file is imported as ownertrust
+"${GPG_PACMAN[@]}" --import-ownertrust "${KEYRING_IMPORT_DIR}/${keyring}-trusted"
+
+# keys in archlinux-revoked are being disabled
+printf 'disable\nquit\n' | LANG=C "${GPG_PACMAN[@]}" --command-fd 0 --quiet --batch --edit-key "${key_id}" 2>/dev/null
+

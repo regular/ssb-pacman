@@ -29,7 +29,7 @@ exports.init = function (ssb, config) {
   const ret = {}
   const importIfNew = ImportIfNew(ssb)
   const index = ssb._flumeUse('pacmanIndex', createIndex(
-    15, function(kv) {
+    16, function(kv) {
       const c = kv.value && kv.value.content
       const name = c && c.name
       const arch = c && c.arch
@@ -81,13 +81,21 @@ exports.init = function (ssb, config) {
   ssb.ws.use(function (req, res, next) {
     if(!(req.method === "GET" || req.method == 'HEAD')) return next()
     const u = url.parse('http://makeurlparseright.com'+req.url)
-    const m = u.pathname.match(/^\/archlinux\/([^\/]+)\/([^\/]+)\/(.+)$/)
+    const m = u.pathname.match(/^\/archlinux\/([^\/]+)\/([^\/]+)\/(.+?)(\.sig)?$/)
     if (!m) return next()
-    const [_, repo, arch, filename] = m
+    const [_, repo, arch, filename, sig] = m
 
     console.log('HTTP', repo, arch, filename)
     index.get(['RAF', repo, arch, filename], (err, kv) => {
       if (err) return res.end('Not found', 404)
+      if (sig) {
+        const files = kv.value && kv.value.content && kv.value.content.files
+        const pgpsig = Buffer.from(parseFiles(files).PGPSIG, 'base64')
+        res.setHeader('Content-Type', 'application/octet-stream')
+        res.setHeader('Content-Length', pgpsig.length)
+        res.end(pgpsig)
+        return
+      }
       const blob = kv.value && kv.value.content && kv.value.content.blob
       req.url = `/blobs/get/${encodeURIComponent(blob)}`
       //res.end(JSON.stringify(kv, null, 2))    
@@ -95,7 +103,13 @@ exports.init = function (ssb, config) {
     })
   })
 
-
+  function getPackageUrl(repo, arch, filename) {
+    const addr = ssb.ws.getAddress()
+    const m =  addr.match(/\:\/\/(.*?)\~/)
+    const http_host = m[1]
+    return `http://${http_host}/archlinux/${repo}/${arch}/${filename}`
+  }
+  
   ret.sha256 = function(name, opts, cb) {
     ret.get(name, opts, (err, {value}) => {
       if (err) return cb(err)
@@ -172,10 +186,16 @@ exports.init = function (ssb, config) {
       name, opts.arch, opts.version, opts.repo
     ])
     return pull(
-      index.read(Object.assign({keys: true, values: false}, opts, {gt, lt} )),
-      pull.map( o => o.key ),
-      pull.map( parseNAVRKey ),
-      pull.unique( o => o.sha256 )
+      index.read(Object.assign({}, opts, {gt, lt, values: true, keys: true} )),
+      pull.through( i => i.key = parseNAVRKey(i.key) ),
+      pull.unique( i => i.key.sha256 ),
+      pull.through( i => {
+        i.content = i.value.value.content
+        i.record = parseFiles(i.content.files)
+        delete i.content.files
+        delete i.value
+        i.url = getPackageUrl(i.content.repo, i.content.arch, i.record.FILENAME)
+      })
     )
   }
 
@@ -325,7 +345,7 @@ function makeDetailKeys(arch, repo, files, blob) {
     ])
 
     return [
-      ['NAVR', p.NAME, p.ARCH, p.VERSION, repo, p.CSIZE, p.ISIZE, p.BUILDDATE, p.SHA256SUM],
+      ['NAVR', p.NAME, arch, p.VERSION, repo, p.CSIZE, p.ISIZE, p.BUILDDATE, p.SHA256SUM],
       ['RAF', repo, arch, p.FILENAME],
       ...deps,
       ...provides
