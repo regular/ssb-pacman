@@ -1,5 +1,5 @@
 #!/usr/bin/bash
-set -eux
+set -eu
 gpgdir=$HOME/.ssb-pacman/gpg
 packey=(pacman-key --gpgdir $gpgdir)
 gpg=(gpg --homedir $gpgdir)
@@ -10,7 +10,7 @@ keyring_pkg_url=$(sbot pacman.versions archlinux-keyring --arch x86_64 | jsonpat
 tmpdir=$(mktemp -d)
 wget -P $tmpdir $keyring_pkg_url{,.sig}
 archive=$(ls $tmpdir --hide=*.sig)
-bsdtar -C $tmpdir -xvJf $archive
+bsdtar -C $tmpdir -xvJf $tmpdir/$archive
 
 keyringfile=$tmpdir/usr/share/pacman/keyrings/archlinux.gpg
 $gpg --import $keyringfile
@@ -20,6 +20,7 @@ pkey=
 
 while read -ra fields; do
   line="${fields[@]}"
+  echo "$line"
   if grep -q "using ... key " < <(echo "$line") ; then
     pkey=$( echo "$line" | cut -d" " -f5 ) 
   fi
