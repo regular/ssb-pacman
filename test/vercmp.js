@@ -15,3 +15,26 @@ test('1 == 1', t => {
   t.equal(vercmp(1, 1), 0, 'result is zero')
   t.end()
 })
+
+test('satisfies', t => {
+  t.ok(vercmp.satisfies(2, '>', 1), '2>1')
+  t.notok(vercmp.satisfies(1, '>', 1), '1>1')
+  t.notok(vercmp.satisfies(1, '>', 2), '1>2')
+
+  t.ok(vercmp.satisfies(1, '<', 2), '1<2')
+  t.notok(vercmp.satisfies(1, '<', 1), '1<1')
+  t.notok(vercmp.satisfies(2, '<', 1), '2<1')
+
+  t.ok(vercmp.satisfies(2, '>=', 1), '2>=1')
+  t.ok(vercmp.satisfies(1, '>=', 1), '1>=1')
+  t.notok(vercmp.satisfies(1, '>=', 2), '1>=2')
+
+  t.ok(vercmp.satisfies(1, '<=', 2), '1<=2')
+  t.ok(vercmp.satisfies(1, '<=', 1), '1<=1')
+  t.notok(vercmp.satisfies(2, '<=', 1), '2<=1')
+
+  t.notOk(vercmp.satisfies(1, '=', 2), '1=2')
+  t.ok(vercmp.satisfies(1, '=', 1), '1=1')
+
+  t.end()
+})

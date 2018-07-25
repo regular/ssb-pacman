@@ -11,6 +11,7 @@ const hs = require('human-size')
 
 const ImportIfNew = require('./import-if-new')
 const parseFile = require('./parse-file')
+const vercmp = require('./vercmp')
 
 exports.name = 'pacman'
 exports.version = require('./package.json').version
@@ -199,7 +200,24 @@ exports.init = function (ssb, config) {
     )
   }
 
-  ret.dependencies = transitiveDependenciesOf //directDependenciesOf;
+  ret.dependencies = function(name, opts) {
+    if (opts.transitive) return transitiveDependenciesOf(name, opts)
+    return directDependenciesOf(name, opts)
+  }
+
+  function candidates(name, opts) {
+    opts = opts || {}
+    const {operator, operand} = opts
+    return pull(
+      ret.versions(name, opts),
+      pull.filter( ({key}) => {
+        const version = key.version
+        if (!operator) return true
+        return vercmp.satisfies(version, operator, operand)
+      }),
+      sort( (a, b) => vercmp(b.key.version, a.key.version) ) // newest first
+    )
+  }
     
   function directDependenciesOf(name, opts) {
     opts = opts || {}
@@ -220,7 +238,21 @@ exports.init = function (ssb, config) {
       })),
       pull.map( k => k.slice(-1)[0] ),
       pull.unique(),
-      pull.map(parseDependencySpec)
+      pull.map(parseDependencySpec),
+      pull.map( spec => Object.assign(spec, {
+        candidates: candidates(spec.name, Object.assign({}, opts, spec)) 
+      })),
+      pull.asyncMap( (spec, cb) => {
+        pull(
+          spec.candidates, 
+          pull.map( ({content}) => content.filename),
+          pull.collect( (err, filenames) => {
+            if (err) return cb(err)
+            spec.candidates = filenames
+            cb(null, spec)
+          }) 
+        )
+      })
     )
   }
 
