@@ -1,15 +1,9 @@
-const pull = require('pull-stream')
-const spawn = require('pull-spawn-process')
+const {spawnSync} = require('child_process')
 
-module.exports = function(v1, v2, cb) {
-  pull(
-    spawn('/usr/bin/vercmp', [v1, v2]),
-    pull.collect( (err, result) => {
-      if (err) return cb(err)
-      console.log(Buffer.concat(result).toString())
-      cb(null, Number(Buffer.concat(result).toString()))
-    })
-  )
+module.exports = function(v1, v2) {
+  const {status, stdout, stderr} = spawnSync('/usr/bin/vercmp', [v1, v2])
+  if (status) throw new Error(stderr.toString())
+  return Number(stdout.toString())
 }
 
 
