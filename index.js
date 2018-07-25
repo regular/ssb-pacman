@@ -227,6 +227,7 @@ exports.init = function (ssb, config) {
     const {gt, lt} = query('DEP', [
       name, version, arch
     ])
+    console.log(gt, lt)
 
     return pull(
       index.read(Object.assign({
@@ -239,19 +240,26 @@ exports.init = function (ssb, config) {
       pull.map( k => k.slice(-1)[0] ),
       pull.unique(),
       pull.map(parseDependencySpec),
-      pull.map( spec => Object.assign(spec, {
-        candidates: candidates(spec.name, Object.assign({}, opts, spec)) 
+      pull.map( spec => Object.assign({}, spec, {
+        candidates: candidates(spec.name, Object.assign({}, opts, spec, {version: undefined})) 
       })),
       pull.asyncMap( (spec, cb) => {
         pull(
           spec.candidates, 
-          pull.map( ({content}) => content.filename),
-          pull.collect( (err, filenames) => {
+          pull.map( ({key}) => key.version),
+          pull.collect( (err, versions) => {
             if (err) return cb(err)
-            spec.candidates = filenames
+            spec.candidates = versions
             cb(null, spec)
-          }) 
+          })
         )
+      }),
+      // TODO: resolve PROV and GROUP
+      pull.asyncMap( (spec, cb) => {
+        if (spec.candidates.length == 0) {
+          return cb(new Error('Unable to resolve dependency' + JSON.stringify(spec)))
+        }
+        cb(null, Object.assign({}, spec, {version: spec.candidates[0], candidates: undefined})) 
       })
     )
   }
@@ -274,7 +282,7 @@ exports.init = function (ssb, config) {
         pull.through( d => d.distance = level ),
         pull.map( d => many([
           pull.once(d),
-          _transDepsOf(d.name, level + 1, opts)
+          _transDepsOf(d.name, level + 1, Object.assign({}, opts, d))
         ])),
         pull.flatten()
       )
