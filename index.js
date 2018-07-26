@@ -5,6 +5,7 @@ const url = require('url')
 const pull = require('pull-stream')
 const many = require('pull-many')
 const sort = require('pull-sort')
+const cat = require('pull-cat')
 const createIndex = require('flumeview-level')
 const createReduce = require('flumeview-reduce')
 const hs = require('human-size')
@@ -23,6 +24,7 @@ exports.manifest = {
   updates: 'source',
   dependencies: 'source',
   providers: 'source',
+  candidates: 'source',
   sha256: 'async'
 }
 
@@ -30,7 +32,7 @@ exports.init = function (ssb, config) {
   const ret = {}
   const importIfNew = ImportIfNew(ssb)
   const index = ssb._flumeUse('pacmanIndex', createIndex(
-    16, function(kv) {
+    20, function(kv) {
       const c = kv.value && kv.value.content
       const name = c && c.name
       const arch = c && c.arch
@@ -181,22 +183,53 @@ exports.init = function (ssb, config) {
     )
   }
   
+  function makeStdRecord(i) {
+    i.key = i.value.key
+    i.content = i.value.value.content
+    i.record = parseFiles(i.content.files)
+    delete i.content.files
+    delete i.value
+    i.url = getPackageUrl(i.content.repo, i.content.arch, i.record.FILENAME)
+  }
+
   ret.versions = function(name, opts) {
     opts = opts || {}
     const {gt, lt} = query('NAVR', [
       name, opts.arch, opts.version, opts.repo
     ])
     return pull(
-      index.read(Object.assign({}, opts, {gt, lt, values: true, keys: true} )),
-      pull.through( i => i.key = parseNAVRKey(i.key) ),
-      pull.unique( i => i.key.sha256 ),
-      pull.through( i => {
-        i.content = i.value.value.content
-        i.record = parseFiles(i.content.files)
-        delete i.content.files
-        delete i.value
-        i.url = getPackageUrl(i.content.repo, i.content.arch, i.record.FILENAME)
-      })
+      index.read(Object.assign({}, opts, {gt, lt, values: true, keys: true, seqs: false} )),
+      pull.through( i => i.index = parseNAVRKey(i.key) ),
+      pull.unique( i => i.index.sha256 ),
+      pull.through( makeStdRecord ) 
+    )
+  }
+
+  ret.providers = function(provision, opts) {
+    opts = opts || {}
+    const arch = opts.arch
+    const name = opts.name
+    const version = String(opts.version)
+
+    const {gt, lt} = query('PROV', [
+      provision,
+      arch,
+      version,
+      name
+    ])
+
+    console.log(gt, lt)
+
+    return pull(
+      index.read(Object.assign({
+        values: true,
+        seqs: false,
+        keys: true
+      }, opts, {
+        gt, lt
+      })),
+      pull.through( i => i.index = parsePROVKey(i.key) ),
+      pull.through( makeStdRecord ) 
     )
   }
 
@@ -205,29 +238,34 @@ exports.init = function (ssb, config) {
     return directDependenciesOf(name, opts)
   }
 
-  function candidates(name, opts) {
+  ret.candidates = function (name, opts) {
     opts = opts || {}
     const {operator, operand} = opts
-    return pull(
-      ret.versions(name, opts),
-      pull.filter( ({key}) => {
-        const version = key.version
-        if (!operator) return true
-        return vercmp.satisfies(version, operator, operand)
-      }),
-      sort( (a, b) => vercmp(b.key.version, a.key.version) ) // newest first
-    )
+    return cat([
+      pull(
+        ret.versions(name, opts),
+        pull.filter( ({index}) => {
+          const version = index.version
+          if (!operator) return true
+          return vercmp.satisfies(version, operator, operand)
+        }),
+        sort( (a, b) => vercmp(b.key.version, a.key.version) ) // newest first
+      ),
+
+      pull(
+        ret.providers(name, opts)
+      )
+    ])
   }
     
   function directDependenciesOf(name, opts) {
     opts = opts || {}
-    const version = opts.version
+    const version = String(opts.version)
     const arch = opts.arch
 
     const {gt, lt} = query('DEP', [
       name, version, arch
     ])
-    console.log(gt, lt)
 
     return pull(
       index.read(Object.assign({
@@ -241,12 +279,18 @@ exports.init = function (ssb, config) {
       pull.unique(),
       pull.map(parseDependencySpec),
       pull.map( spec => Object.assign({}, spec, {
-        candidates: candidates(spec.name, Object.assign({}, opts, spec, {version: undefined})) 
+        candidates: ret.candidates(spec.name, Object.assign({}, opts, spec, {version: undefined}))
       })),
       pull.asyncMap( (spec, cb) => {
         pull(
-          spec.candidates, 
-          pull.map( ({key}) => key.version),
+          spec.candidates,
+          pull.map( e => ({
+            key: e.key,
+            name: e.content.name,
+            version: e.record.VERSION,
+            arch: e.content.arch,
+            repo: e.content.repo
+          })),
           pull.collect( (err, versions) => {
             if (err) return cb(err)
             spec.candidates = versions
@@ -315,30 +359,6 @@ exports.init = function (ssb, config) {
     return index.read(Object.assign({live: true, old: false}, opts))
   }
 
-  ret.providers = function(provision, opts) {
-    opts = opts || {}
-    const arch = opts.arch
-    const name = opts.name
-    const version = opts.version
-
-    const {gt, lt} = query('PROV', [
-      provision,
-      arch,
-      name,
-      version
-    ])
-
-    return pull(
-      index.read(Object.assign({
-        values: false,
-        seqs: false,
-        keys: true
-      }, opts, {
-        gt, lt
-      }))
-    )
-  }
-
   ret.import = function(repopath, opts, cb) {
     return importIfNew(repopath, opts, cb)
   }
@@ -376,13 +396,17 @@ function makeDetailKeys(arch, repo, files, blob) {
       d
     ])
 
-    const provides = ary(p.PROVIDES || []).map( d => [
-      'PROV', 
-      d,
-      arch, 
-      p.NAME,
-      p.VERSION
-    ])
+    const provides = ary(p.PROVIDES || []).map( d => {
+      const [provision, version] = d.split('=')
+      return [
+        'PROV', 
+        provision,
+        arch, 
+        version || null,
+        p.NAME,
+        p.VERSION
+      ]
+    })
 
     return [
       ['NAVR', p.NAME, arch, p.VERSION, repo, p.CSIZE, p.ISIZE, p.BUILDDATE, p.SHA256SUM],
@@ -390,6 +414,13 @@ function makeDetailKeys(arch, repo, files, blob) {
       ...deps,
       ...provides
     ]
+}
+
+function parsePROVKey(k) {
+  const [_, provision, arch, prov_version, name, version] = k
+  return {
+    provision, prov_version, arch, name, version
+  }
 }
 
 function parseNAVRKey(k) {
