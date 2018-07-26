@@ -5,10 +5,12 @@ const url = require('url')
 const pull = require('pull-stream')
 const many = require('pull-many')
 const sort = require('pull-sort')
+const defer = require('pull-defer')
 const cat = require('pull-cat')
 const createIndex = require('flumeview-level')
 const createReduce = require('flumeview-reduce')
 const hs = require('human-size')
+const ref = require('ssb-ref')
 
 const ImportIfNew = require('./import-if-new')
 const parseFile = require('./parse-file')
@@ -32,16 +34,18 @@ exports.init = function (ssb, config) {
   const ret = {}
   const importIfNew = ImportIfNew(ssb)
   const index = ssb._flumeUse('pacmanIndex', createIndex(
-    20, function(kv) {
+    22, function(kv) {
       const c = kv.value && kv.value.content
       const name = c && c.name
       const arch = c && c.arch
       const repo = c && c.repo
       const blob = c && c.blob
+      const files = c.files || []
+      
       if (!name || !arch || !repo) return []
       return [
         makeKey(arch, repo, name),
-        ... makeDetailKeys(arch, repo, c.files || [], blob)
+        ... makeDetailKeys(kv)
       ]
     }
   ))
@@ -209,7 +213,7 @@ exports.init = function (ssb, config) {
     opts = opts || {}
     const arch = opts.arch
     const name = opts.name
-    const version = String(opts.version)
+    const version = string(opts.version)
 
     const {gt, lt} = query('PROV', [
       provision,
@@ -233,14 +237,16 @@ exports.init = function (ssb, config) {
     )
   }
 
-  ret.dependencies = function(name, opts) {
-    if (opts.transitive) return transitiveDependenciesOf(name, opts)
-    return directDependenciesOf(name, opts)
+  ret.dependencies = function(nameOrKey, opts) {
+    opts = opts || {}
+    if (opts.transitive) return transitiveDependenciesOf(nameOrKey, opts)
+    return directDependenciesOf(nameOrKey, opts)
   }
 
   ret.candidates = function (name, opts) {
     opts = opts || {}
-    const {operator, operand} = opts
+    const operator = opts.operator
+    const operand = string(opts.operand)
     return cat([
       pull(
         ret.versions(name, opts),
@@ -249,23 +255,40 @@ exports.init = function (ssb, config) {
           if (!operator) return true
           return vercmp.satisfies(version, operator, operand)
         }),
-        sort( (a, b) => vercmp(b.key.version, a.key.version) ) // newest first
+        sort( (a, b) => vercmp(b.index.version, a.index.version) ) // newest first
       ),
 
       pull(
-        ret.providers(name, opts)
+        ret.providers(name, opts),
+        pull.filter( ({index}) => {
+          const version = index.prov_version
+          if (!operator) return true
+          return vercmp.satisfies(version, operator, operand)
+        }),
+        sort( (a, b) => vercmp(b.index.prov_version, a.index.prov_version) ) // newest first
       )
     ])
   }
     
-  function directDependenciesOf(name, opts) {
+  function directDependenciesOf(nameOrKey, opts) {
+    console.log('direct', nameOrKey, JSON.stringify(opts))
     opts = opts || {}
-    const version = String(opts.version)
+    if (!nameOrKey) throw new Error('argument missing: nameOrKey')
+    const version = string(opts.version)
     const arch = opts.arch
 
-    const {gt, lt} = query('DEP', [
+    let name, key
+    if (ref.isMsg(nameOrKey)) {
+      key = nameOrKey
+    } else {
+      name = nameOrKey
+    }
+
+    const {gt, lt} = key ? query('KDEP', [key]) : query('DEP', [
       name, version, arch
     ])
+
+    console.log(gt, lt)
 
     return pull(
       index.read(Object.assign({
@@ -284,6 +307,7 @@ exports.init = function (ssb, config) {
       pull.asyncMap( (spec, cb) => {
         pull(
           spec.candidates,
+          /*
           pull.map( e => ({
             key: e.key,
             name: e.content.name,
@@ -291,68 +315,107 @@ exports.init = function (ssb, config) {
             arch: e.content.arch,
             repo: e.content.repo
           })),
-          pull.collect( (err, versions) => {
+          */
+          pull.collect( (err, candidates) => {
             if (err) return cb(err)
-            spec.candidates = versions
+            spec.candidates = candidates
             cb(null, spec)
           })
         )
       }),
-      // TODO: resolve PROV and GROUP
+    
       pull.asyncMap( (spec, cb) => {
         if (spec.candidates.length == 0) {
           return cb(new Error('Unable to resolve dependency' + JSON.stringify(spec)))
         }
-        cb(null, Object.assign({}, spec, {version: spec.candidates[0], candidates: undefined})) 
+        // simplistic candidate selection
+        spec.alternatives = spec.candidates.length=1
+        cb(null, Object.assign({}, spec, spec.candidates[0], {candidates: undefined})) 
       })
     )
   }
 
-  function transitiveDependenciesOf(name, opts) {
-    opts = opts || {}
-    const seen = {}
+  // get the key of a package described by opts
+  function identify(name, opts, cb) {
+    pull(
+      ret.versions(name, opts),
+      pull.collect( (err, versions)=>{
+        if (err) return cb(err)
+        if (!versions.length) return cb(new Error('identify: not found'))
+        if (versions.length>1) return cb(new Error('identify: ambigious result'))
+        cb(null, versions[0])
+      })
+    )
+  }
 
-    function _transDepsOf(name, level, opts) {
+  function transitiveDependenciesOf(nameOrKey, opts) {
+    opts = opts || {}
+    if (!nameOrKey) throw new Error('argument missing: nameOrKey')
+    let name, key
+    if (ref.isMsg(nameOrKey)) {
+      key = nameOrKey
+    } else {
+      name = nameOrKey
+    }
+
+    const seen = {}
+    function _transDepsOf(key, value, deppath, opts) {
+      const level = deppath.length
       // record the highest level at which we've seen a package
       // (this determines installation order. (breadth first)
-      if (seen[name]) {
-        seen[name] = Math.max(seen[name], level)
+      if (seen[key]) {
+        seen[key].level = Math.max(seen[key].level, level)
         return pull.empty()
       }
-      seen[name] = level
+      seen[key] = Object.assign({}, value, {level})
       
       return pull(
-        directDependenciesOf(name, opts),
-        pull.through( d => d.distance = level ),
+        directDependenciesOf(key, opts),
+        pull.through( d => {
+          d.distance = level
+          d.deppath = deppath
+        }),
         pull.map( d => many([
           pull.once(d),
-          _transDepsOf(d.name, level + 1, Object.assign({}, opts, d))
+          _transDepsOf(d.key, d, deppath.concat([d.content.name]), Object.assign({}, opts))
         ])),
         pull.flatten()
       )
     }
 
-    const trans_deps = pull(
-      _transDepsOf(name, 1, opts),
-      pull.through(console.log),
-      pull.unique(d => `${d.name}`)
-      // TODO: resolve abstract/provision (like "sh")
-      // TODO: get versions for concrete packages and pick a candidate (resolve dep specs)
-    )
+    function unsorted(key) {
+      return pull(
+        _transDepsOf(key, {key}, [], opts),
+        pull.unique(d => `${d.key}`)
+      )
+    }
 
-    if (!opts.sort) return trans_deps
-    return pull(
-      pull.once('not relevant'),
-      pull.asyncMap( (_, cb) => {
-        pull(trans_deps, pull.collect( err => {
-          if (err) return cb(err)
-          cb(null, Object.entries(seen))
-        }))
-      }),
-      pull.flatten(),
-      pull.map( ([name, level]) => ({name, level}) ),
-      sort( (a, b) => b.level - a.level )
-    )
+    function sorted(key) {
+      return pull(
+        pull.once('not relevant'),
+        pull.asyncMap( (_, cb) => {
+          pull(unsorted(key), pull.collect( err => {
+            if (err) return cb(err)
+            cb(null, Object.values(seen))
+          }))
+        }),
+        pull.flatten(),
+        pull.through( e => delete e.level ),
+        pull.filter( e => e.key !== key ),
+        sort( (a, b) => b.distance - a.distance )
+      )
+    }
+
+    if (key) return opts.sort ? sorted(key) : unsorted(key)
+
+    const deferred = defer.source()
+    identify(name, opts, (err, key) => {
+      if (err) return deferred.resolve(pull.error(err))
+      const stream = opts.sort ? sorted(key) : unsorted(key)
+      deferred.resolve(stream)
+    })
+    return deferred
+
   }
 
   ret.updates = function(opts) {
@@ -386,13 +449,26 @@ function parseFiles(files) {
   return parseFile(content)
 }
 
-function makeDetailKeys(arch, repo, files, blob) {
+function makeDetailKeys(kv) {
+    const c = kv.value && kv.value.content
+    const name = c && c.name
+    const arch = c && c.arch
+    const repo = c && c.repo
+    const blob = c && c.blob
+    const files = c.files || []
     const p = parseFiles(files)
+
     const deps = ary(p.DEPENDS || []).map( d => [
       'DEP', 
       p.NAME,
       p.VERSION, 
       arch, 
+      d
+    ])
+    // not strictly needed, except for simplifying code ..
+    const kdeps = ary(p.DEPENDS || []).map( d => [
+      'KDEP',
+      kv.key,
       d
     ])
 
@@ -412,6 +488,7 @@ function makeDetailKeys(arch, repo, files, blob) {
       ['NAVR', p.NAME, arch, p.VERSION, repo, p.CSIZE, p.ISIZE, p.BUILDDATE, p.SHA256SUM],
       ['RAF', repo, arch, p.FILENAME],
       ...deps,
+      ...kdeps,
       ...provides
     ]
 }
@@ -443,6 +520,9 @@ function ary(x) {
   return Array.isArray(x) ? x : [x]
 }
 
+function string(n) {
+  return typeof n == 'number' ? String(n) : n
+}
 
 function parseDependencySpec(spec) {
   const m = spec.match(/^(.+?)(([=><]{1,2})(.+))?$/)
