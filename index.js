@@ -34,7 +34,7 @@ exports.init = function (ssb, config) {
   const ret = {}
   const importIfNew = ImportIfNew(ssb)
   const index = ssb._flumeUse('pacmanIndex', createIndex(
-    22, function(kv) {
+    23, function(kv) {
       const c = kv.value && kv.value.content
       const name = c && c.name
       const arch = c && c.arch
@@ -284,22 +284,35 @@ exports.init = function (ssb, config) {
       name = nameOrKey
     }
 
-    const {gt, lt} = key ? query('KDEP', [key]) : query('DEP', [
-      name, version, arch
-    ])
+    const depends =
+      key ? pull(
+        pull.once(key),
+        pull.asyncMap( ssb.get ),
+        pull.map( value => {
+          const content = value.content
+          const arch = content.arch
+          opts.arch = arch
+          const files = content.files
+          const p = parseFiles(files)
+          return ary(p.DEPENDS || [])
+        }),
+        pull.flatten()
+      ) : pull(
+        index.read(Object.assign({
+          values: false,
+          seqs: false,
+          keys: true
+        }, opts, query('DEP', [
+          name, version, arch
+        ]))),
+        pull.map( k => k.slice(-1)[0] ),
+        pull.unique()
+      )
 
-    console.log(gt, lt)
 
     return pull(
-      index.read(Object.assign({
-        values: false,
-        seqs: false,
-        keys: true
-      }, opts, {
-        gt, lt
-      })),
-      pull.map( k => k.slice(-1)[0] ),
-      pull.unique(),
+      depends,
+      pull.through(console.log),
       pull.map(parseDependencySpec),
       pull.map( spec => Object.assign({}, spec, {
         candidates: ret.candidates(spec.name, Object.assign({}, opts, spec, {version: undefined}))
@@ -465,12 +478,6 @@ function makeDetailKeys(kv) {
       arch, 
       d
     ])
-    // not strictly needed, except for simplifying code ..
-    const kdeps = ary(p.DEPENDS || []).map( d => [
-      'KDEP',
-      kv.key,
-      d
-    ])
 
     const provides = ary(p.PROVIDES || []).map( d => {
       const [provision, version] = d.split('=')
@@ -488,7 +495,6 @@ function makeDetailKeys(kv) {
       ['NAVR', p.NAME, arch, p.VERSION, repo, p.CSIZE, p.ISIZE, p.BUILDDATE, p.SHA256SUM],
       ['RAF', repo, arch, p.FILENAME],
       ...deps,
-      ...kdeps,
       ...provides
     ]
 }
