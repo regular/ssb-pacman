@@ -168,9 +168,20 @@ exports.init = function (ssb, config) {
     })
   }
 
-  ret.get = function(name, opts, cb) {
+  ret.get = function(nameOrKey, opts, cb) {
     if (typeof opts == 'function') {cb = opts; opts = {} }
     opts = opts || {}
+    
+    if (ref.isMsg(nameOrKey)) {
+      ssb.get(nameOrKey, (err, v) => {
+        if (err) return cb(err)
+        const kkv = {value: {key: nameOrKey, value: v}}
+        makeStdRecord(kkv)
+        cb(null, kkv)
+      })
+      return
+    }
+    
     const arch = opts && opts.arch
     const repo = opts && opts.repo
     if (!name || !arch) throw new Error('Required arguments: NAME --arch')
@@ -238,6 +249,7 @@ exports.init = function (ssb, config) {
   }
 
   ret.dependencies = function(nameOrKey, opts) {
+    console.log('dependencies', nameOrKey, JSON.stringify(opts))
     opts = opts || {}
     if (opts.transitive) return transitiveDependenciesOf(nameOrKey, opts)
     return directDependenciesOf(nameOrKey, opts)
@@ -274,8 +286,6 @@ exports.init = function (ssb, config) {
     console.log('direct', nameOrKey, JSON.stringify(opts))
     opts = opts || {}
     if (!nameOrKey) throw new Error('argument missing: nameOrKey')
-    const version = string(opts.version)
-    const arch = opts.arch
 
     let name, key
     if (ref.isMsg(nameOrKey)) {
@@ -303,7 +313,7 @@ exports.init = function (ssb, config) {
           seqs: false,
           keys: true
         }, opts, query('DEP', [
-          name, version, arch
+          name, opts.version, opts.arch
         ]))),
         pull.map( k => k.slice(-1)[0] ),
         pull.unique()
@@ -312,7 +322,6 @@ exports.init = function (ssb, config) {
 
     return pull(
       depends,
-      pull.through(console.log),
       pull.map(parseDependencySpec),
       pull.map( spec => Object.assign({}, spec, {
         candidates: ret.candidates(spec.name, Object.assign({}, opts, spec, {version: undefined}))
@@ -342,7 +351,7 @@ exports.init = function (ssb, config) {
           return cb(new Error('Unable to resolve dependency' + JSON.stringify(spec)))
         }
         // simplistic candidate selection
-        spec.alternatives = spec.candidates.length=1
+        spec.alternatives = spec.candidates.length - 1
         cb(null, Object.assign({}, spec, spec.candidates[0], {candidates: undefined})) 
       })
     )
@@ -378,19 +387,20 @@ exports.init = function (ssb, config) {
       // (this determines installation order. (breadth first)
       if (seen[key]) {
         seen[key].level = Math.max(seen[key].level, level)
-        return pull.empty()
+        if (!opts.sort) return pull.empty()
+      } else {
+        seen[key] = Object.assign({}, value, {level})
       }
-      seen[key] = Object.assign({}, value, {level})
       
       return pull(
         directDependenciesOf(key, opts),
         pull.through( d => {
-          d.distance = level
-          d.deppath = deppath
+          d.distance = level + 1
+          d.deppath = deppath.concat([d.content.name])
         }),
         pull.map( d => many([
           pull.once(d),
-          _transDepsOf(d.key, d, deppath.concat([d.content.name]), Object.assign({}, opts))
+          _transDepsOf(d.key, d, d.deppath, Object.assign({}, opts))
         ])),
         pull.flatten()
       )
@@ -399,7 +409,7 @@ exports.init = function (ssb, config) {
     function unsorted(key) {
       return pull(
         _transDepsOf(key, {key}, [], opts),
-        pull.unique(d => `${d.key}`)
+        pull.unique(d => d.key)
       )
     }
 
@@ -413,7 +423,10 @@ exports.init = function (ssb, config) {
           }))
         }),
         pull.flatten(),
-        pull.through( e => delete e.level ),
+        pull.through( e => {
+          e.distance = e.level
+          delete e.level 
+        }),
         pull.filter( e => e.key !== key ),
         sort( (a, b) => b.distance - a.distance )
       )
