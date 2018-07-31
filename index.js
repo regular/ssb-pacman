@@ -34,17 +34,22 @@ exports.manifest = {
 
 function makeSyncDBStream(index, arch, repo) {
   const pack = tar.pack() // pack is a streams2 stream
-  const {gt, lt} = query('RAN', [ repo, arch ])
+  const {gt, lt} = query('RANV', [ repo, arch ])
 
   pull(
     index.read({gt, lt, values: true, keys: true, seqs: true} ),
+    sort( (a, b) => b.seq - a.seq),
+    pull.unique( kkv => {
+      const [_, repo, arch, name, version] = kkv.key
+      return name
+    }),
     pull.map( kkv => {
-      const [_, repo, arch, name] = kkv.key
+      const [_, repo, arch, name, version] = kkv.key
       const value = kkv.value && kkv.value.value
       const content = value && value.content
       const files = content && content.files
       return (files || []).map( file => ({
-        header: {name: name + '/' + file.name},
+        header: {name: `${name}-${version}/${file.name}`},
         content: getFileContent(file)
       }) )
     }),
@@ -63,7 +68,7 @@ exports.init = function (ssb, config) {
   const ret = {}
   const importIfNew = ImportIfNew(ssb)
   const index = ssb._flumeUse('pacmanIndex', createIndex(
-    24, function(kv) {
+    25, function(kv) {
       const c = kv.value && kv.value.content
       const name = c && c.name
       const arch = c && c.arch
@@ -555,7 +560,7 @@ function makeDetailKeys(kv) {
     return [
       ['NAVR', p.NAME, arch, p.VERSION, repo, p.CSIZE, p.ISIZE, p.BUILDDATE, p.SHA256SUM],
       ['RAF', repo, arch, p.FILENAME],
-      ['RAN', repo, arch, name],
+      ['RANV', repo, arch, p.NAME, p.VERSION],
       ...deps,
       ...provides
     ]
