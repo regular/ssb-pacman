@@ -38,3 +38,4 @@ if [[ -s $tmpdir/root/.INSTALL ]]; then
   cat $tmpdir/root/.INSTALL >> $msgfile
   less $msgfile
 fi
+exit 0

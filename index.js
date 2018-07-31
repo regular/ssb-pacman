@@ -182,6 +182,7 @@ exports.init = function (ssb, config) {
       return
     }
     
+    const name = nameOrKey
     const arch = opts && opts.arch
     const repo = opts && opts.repo
     if (!name || !arch) throw new Error('Required arguments: NAME --arch')
