@@ -13,7 +13,12 @@ pacman-deps|cut -d" " -f3 | xargs -I% ./install.sh % root
 
 ./bootstrap.sh root
 
+
 ## Use pacman to install a single package in the chroot
 
 ./install-with-pacman.sh "%znSz0++uDsr2q0ukmkltIxi3ZxmerngQPVvBZyG65mU=.sha256" root
+
+## Use pacman to install a packages with dependencies in the chroot
+
+./ssb-pacman-install sed grep vim
 
