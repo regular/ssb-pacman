@@ -9,5 +9,11 @@ pacman-deps|cut -d" " -f3 | xargs -I% ./install.sh % root
 ## then install pacman itself
 ./install.sh %znSz0++uDsr2q0ukmkltIxi3ZxmerngQPVvBZyG65mU=.sha256 root
 
-cp -r ~/.ssb-pacman/gpg root/etc/pacman.d/gnupg
-sudo chroot root chown -R root:root /etc/pacman.d/gnupg
+## Create an execution environment for pacman in the chroot and re-install pacman deps using pacman itself
+
+./bootstrap.sh root
+
+## Use pacman to install a single package in the chroot
+
+./install-with-pacman.sh "%znSz0++uDsr2q0ukmkltIxi3ZxmerngQPVvBZyG65mU=.sha256" root
+
