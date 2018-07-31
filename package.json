@@ -27,7 +27,8 @@
     "pull-stream": "^3.6.8",
     "ssb-client": "^4.5.7",
     "ssb-ref": "^2.11.1",
-    "stream-to-pull-stream": "^1.7.2"
+    "stream-to-pull-stream": "^1.7.2",
+    "tar-stream": "^1.6.1"
   },
   "devDependencies": {
     "tape": "^4.9.1"

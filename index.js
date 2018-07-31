@@ -11,6 +11,7 @@ const createIndex = require('flumeview-level')
 const createReduce = require('flumeview-reduce')
 const hs = require('human-size')
 const ref = require('ssb-ref')
+const tar = require('tar-stream')
 
 const ImportIfNew = require('./import-if-new')
 const parseFile = require('./parse-file')
@@ -31,11 +32,38 @@ exports.manifest = {
   sha256: 'async'
 }
 
+function makeSyncDBStream(index, arch, repo) {
+  const pack = tar.pack() // pack is a streams2 stream
+  const {gt, lt} = query('RAN', [ repo, arch ])
+
+  pull(
+    index.read({gt, lt, values: true, keys: true, seqs: true} ),
+    pull.map( kkv => {
+      const [_, repo, arch, name] = kkv.key
+      const value = kkv.value && kkv.value.value
+      const content = value && value.content
+      const files = content && content.files
+      return (files || []).map( file => ({
+        header: {name: name + '/' + file.name},
+        content: getFileContent(file)
+      }) )
+    }),
+    pull.flatten(),
+    pull.drain( entry => {
+      pack.entry( entry.header, entry.content)
+    }, err => {
+      if (err) pack.emit('error', err)
+      pack.finalize()
+    })
+  )
+  return pack
+}
+
 exports.init = function (ssb, config) {
   const ret = {}
   const importIfNew = ImportIfNew(ssb)
   const index = ssb._flumeUse('pacmanIndex', createIndex(
-    23, function(kv) {
+    24, function(kv) {
       const c = kv.value && kv.value.content
       const name = c && c.name
       const arch = c && c.arch
@@ -94,8 +122,21 @@ exports.init = function (ssb, config) {
     const [_, repo, arch, filename, sig] = m
 
     console.log('HTTP', repo, arch, filename)
+    if (filename == repo + '.db') {
+      if (sig) {
+        console.log('requesting syncdb signature')
+        //return res.end('Not found', 404)
+        return next()
+      }
+      console.log(`requesting syncdb for ${repo} (${arch})`)
+
+      const pack = makeSyncDBStream(index, arch, repo)
+      pack.pipe(res)
+      return
+    }
+
     index.get(['RAF', repo, arch, filename], (err, kv) => {
-      if (err) return res.end('Not found', 404)
+      if (err || !kv) return next()
       if (sig) {
         const files = kv.value && kv.value.content && kv.value.content.files
         const pgpsig = Buffer.from(parseFiles(files).PGPSIG, 'base64')
@@ -107,7 +148,7 @@ exports.init = function (ssb, config) {
       const blob = kv.value && kv.value.content && kv.value.content.blob
       req.url = `/blobs/get/${encodeURIComponent(blob)}`
       //res.end(JSON.stringify(kv, null, 2))    
-      next()
+      return next()
     })
   })
 
@@ -514,6 +555,7 @@ function makeDetailKeys(kv) {
     return [
       ['NAVR', p.NAME, arch, p.VERSION, repo, p.CSIZE, p.ISIZE, p.BUILDDATE, p.SHA256SUM],
       ['RAF', repo, arch, p.FILENAME],
+      ['RAN', repo, arch, name],
       ...deps,
       ...provides
     ]
