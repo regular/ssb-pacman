@@ -23,6 +23,7 @@ exports.manifest = {
   versions: 'source',
   stats: 'async',
   get: 'async',
+  getAddress: 'sync',
   updates: 'source',
   dependencies: 'source',
   providers: 'source',
@@ -116,7 +117,12 @@ exports.init = function (ssb, config) {
     const http_host = m[1]
     return `http://${http_host}/archlinux/${repo}/${arch}/${filename}`
   }
-  
+
+  ret.getAddress = function() {
+    const addr = getPackageUrl('$repo', '$arch', '')
+    return addr.substr(0, addr.length - 1)
+  }
+
   ret.sha256 = function(name, opts, cb) {
     ret.get(name, opts, (err, {value}) => {
       if (err) return cb(err)
