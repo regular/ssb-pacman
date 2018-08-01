@@ -1,0 +1,13 @@
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = *
+
+[Action]
+Description = Copy ssb-pacman message key into local db
+Depends = coreutils
+When = PostTransaction
+NeedsTargets
+Exec = /usr/bin/bash /ssb-pacman-add-key
+
