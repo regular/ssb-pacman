@@ -48,7 +48,10 @@ function makeSyncDBStream(index, arch, repo) {
       const value = kkv.value && kkv.value.value
       const content = value && value.content
       const files = content && content.files
-      return (files || []).map( file => ({
+      return (files || []).concat([{
+        name: 'ssb',
+        content: `%KEY%\n${kkv.value.key}\n`
+      }]).map( file => ({
         header: {name: `${name}-${version}/${file.name}`},
         content: getFileContent(file)
       }) )

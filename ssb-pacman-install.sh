@@ -25,3 +25,4 @@ configure_minimal_system "$root"
 
 sudo chroot "$root" bash -c "export GPGME_DEBUG=1; pacman -Sy"
 sudo chroot "$root" bash -c "export GPGME_DEBUG=1; pacman -S $pkg --debug"
+sudo chroot "$root" bash -c "pacman -Scc --debug"
