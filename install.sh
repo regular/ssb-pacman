@@ -1,41 +1,46 @@
 #!/usr/bin/bash
-set -eux
+set -eu -o pipefail
+
 if [[ ! -d $2 ]]; then
   echo "Usage %msgid ROOT"
   exit 1
 fi
 root="$2"
 
-gpgdir=$HOME/.ssb-pacman/gpg
+gpgdir="$HOME/.ssb-pacman/gpg"
 gpg="gpg --homedir $gpgdir"
 
-# TODO
-key=$1
-pkg_url=$(sbot pacman.get $1 | jsonpath-dl url)
-name=$(sbot pacman.get $1 | jsonpath-dl content.name)
-arch=$(sbot pacman.get $1 | jsonpath-dl content.arch)
+key="$1"
+read -r pkg_url name arch < <(sbot pacman.get "$key" | jsonpath-dl url content.name content.arch)
 
-tmpdir=$(mktemp -d)
-wget -P $tmpdir $pkg_url{,.sig}
-archive=$(ls $tmpdir --hide=*.sig)
+tmpdir="$(mktemp -d)"
+wget -P "$tmpdir" "$pkg_url"{,.sig}
+archive="$(basename "$pkg_url")"
 echo
 
-$gpg --verify $tmpdir/*.sig $tmpdir/$archive
+$gpg --verify "$tmpdir/$archive.sig" "$tmpdir/$archive"
 echo
 echo "Package signature is ok, unpacking ..."
 echo
-mkdir $tmpdir/root
-bsdtar -C $tmpdir/root -xvJf $tmpdir/$archive
+mkdir "$tmpdir/root"
+# TODO: do we need the -p flag here?
+# it fails with 'unable to set file flags' even for superuser
+bsdtar -C "$tmpdir/root" -xvJf "$tmpdir/$archive"
 echo
 
-cp -r $tmpdir/root/* $root
-
-if [[ -s $tmpdir/root/.INSTALL ]]; then
-  msgfile=$tmpdir/ignored-install-script
-  echo "# This installer ignores the following install scripts for package" > $msgfile
-  echo "# $name $arch $key" >> $msgfile
-  echo >> $msgfile
-  cat $tmpdir/root/.INSTALL >> $msgfile
-  less $msgfile
+src="$tmpdir/root/*"
+if ls $src; then
+  cp -afr $src "$root"
+else
+  echo "Nothing to copy"
 fi
-exit 0
+
+if [[ -s "$tmpdir/root/.INSTALL" ]]; then
+  {
+    echo "# This installer ignores the following install scripts for package"
+    echo "# $name $arch $key"
+    echo
+    cat "$tmpdir/root/.INSTALL"
+  } | less
+fi
+rm -rf "$tmpdir"

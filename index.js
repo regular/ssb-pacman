@@ -38,6 +38,7 @@ function makeSyncDBStream(index, arch, repo) {
 
   pull(
     index.read({gt, lt, values: true, keys: true, seqs: true} ),
+    //pull.through( console.log ),
     sort( (a, b) => b.seq - a.seq),
     pull.unique( kkv => {
       const [_, repo, arch, name, version] = kkv.key
@@ -58,7 +59,7 @@ function makeSyncDBStream(index, arch, repo) {
     }),
     pull.flatten(),
     pull.drain( entry => {
-      pack.entry( entry.header, entry.content)
+      pack.entry(entry.header, entry.content)
     }, err => {
       if (err) pack.emit('error', err)
       pack.finalize()
