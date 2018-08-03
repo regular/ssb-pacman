@@ -28,43 +28,53 @@ sbot start
 in a different terminal
 
 ```
-# should be: ssb-pacman sync
-cd ~/.ssb-pacman/node_modules/ssb-pacman
-./update-all.sh
+ssb-pacman-sync
 ```
 
-(this will take a long time to finish)
+This will take a long time to finish. You can use the scripts in `monitor` to watch the progress. (use tmux for a full dashboard-style experience)
 
 Meanwhile, in yet another terminal:
 
 ```
-./signing.sh
-# should be: ssb-pacman keyring-setup
+ssb-pacman-init-keyring
 ```
 
 ## Install a minimal system in directory `root`
 
 ```
-sbot pacman.versions pacman --arch x86_64| jsonpath-dl record.VERSION key
-sbot pacman.dependencies %znSz0++uDsr2q0ukmkltIxi3ZxmerngQPVvBZyG65mU=.sha256 --transitive --sort|jsonpath-dl key content.name record.DESC > pacman-deps
-./bootstrap.sh root
+ssb-pacman-bootstrap root
 ```
+
+This downloads and extracts the latest version of pacman and then runs it, so it can re-install itself properly (i.e. withe running package-specific
+.INSTALL scripts and pacman hooks, both witch are not done by the initial extract pass)
+This results in a clean, minimal system with a working package manager that uses the secure scuttlebutt network as its "mirror server".
 
 ## Use pacman to install a packages with dependencies in the chroot
 
 ```
-# should be: ssb-pacman install --root=root sed grep vim
-./ssb-pacman-install sed root
-./ssb-pacman-install grep root
-./ssb-pacman-install vim root
+# TODO: support multiple package names
+ssb-pacman-install vim root
+ssb-pacman-install sed root
+ssb-pacman-install grep root
 ```
+
+A pacman post-transaction hook is installed in the target root, that records
+the exact hashes of installed packages. This is called the "shrinkwrap file". It's purpose
+is similar to package-lock.json or npm's shrinkwrap file.
+
 
 # Create shrinkwrap file
 
 ```
-# should be: ssb-pacman shrinkwrap root
-sudo arch-chroot /ssb-pacman-shrinkwrap.sh
+sudo arch-chroot /ssb-pacman-shrinkwrap
 ```
+
+You can enter the chroot to test stuff out.
+
+```
+sudo arch chroot
+```
+
 # TODO
 
 - [ ] bindings for vercmp instead of spawning the binary

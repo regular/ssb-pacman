@@ -1,5 +1,6 @@
 #!/usr/bin/bash
 set -eu -o pipefail
+export ssb_appname=ssb-pacman
 bindir=$( (cd "$(dirname "$0")" && pwd) )
 extract="$bindir/ssb-pacman-extract"
 
@@ -9,19 +10,26 @@ if [[ $# -lt 1 ]]; then
 fi
 root="$1"
 
+tmpdir=$(mktemp -d)
+depfile="$tmpdir/pacman-deps"
+
+extract_pacman_and_deps () {
+  pacman_id=$(sbot pacman.versions pacman --arch x86_64 --sort | jsonpath-dl key | head -n1)
+  echo "Extracting" "$(sbot pacman.get "$pacman_id" | jsonpath-dl content.name)" "..."
+  sbot pacman.dependencies "$pacman_id" --transitive --sort | jsonpath-dl key content.name record.DESC | tee "$depfile"
+  cat "$depfile" | cut -d" " -f1 | xargs -n 1 sh -c '"'$extract'" "$0" "'$root'" || exit 255'
+  # then install pacman itself
+  "$extract" "$pacman_id" "$root"
+}
+
 mkdir -p "$root"
-
-# TODO: get pacman-deps
-cat pacman-deps | cut -d" " -f3 | xargs -n 1 sh -c '"'$extract'" "$0" "'$root'" || exit 255'
-
-# then install pacman itself
-"$extract" "%znSz0++uDsr2q0ukmkltIxi3ZxmerngQPVvBZyG65mU=.sha256" "$root"
+extract_pacman_and_deps
 
 sudo cp -r ~/.ssb-pacman/gpg "$root"/etc/pacman.d/gnupg
 sudo arch-chroot "$root" chown -R root:root /etc/pacman.d/gnupg
 
 # TODO: Why exactly do we need this?
-sudo arch-chroot $root /usr/bin/pacman-key --init
+sudo arch-chroot "$root" /usr/bin/pacman-key --init
 
 # set up the post-transaction hook
 sudo mkdir -p "$root/etc/pacman.d/hooks/"
