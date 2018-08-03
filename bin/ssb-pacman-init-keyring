@@ -1,0 +1,145 @@
+#!/usr/bin/bash
+set -eu -o pipefail
+
+gpgdir="$HOME/.ssb-pacman/gpg"
+plugindir="$HOME/.ssb-pacman/node_modules/ssb-pacman"
+tmpdir=$(mktemp -d)
+
+GPG () {
+  LANG=C gpg --homedir "$gpgdir" $*
+}
+
+generate_master_key() {
+  # Generate the master key, which will be in both pubring and secring
+  GPG --gen-key --batch <<EOF
+%echo Generating pacman keyring master key...
+Key-Type: RSA
+Key-Length: 2048
+Key-Usage: sign
+Name-Real: Pacman Keyring Master Key
+Name-Email: pacman@localhost
+Expire-Date: 0
+%no-protection
+%commit
+%echo Done
+EOF
+}
+
+webkeys () {
+  "$plugindir/node_modules/.bin/get-arch-master-keys"
+}
+
+show_keys () {
+  {
+    while read -r key; do
+      GPG --with-colons --list-key "$key"
+    done
+  } | node "$plugindir/tools/parse-gpg.js"
+}
+
+get_keyring_package () {
+  # TODO: sort and pick latest
+  local keyring_pkg_url=$(sbot pacman.versions archlinux-keyring --arch x86_64 | jsonpath-dl url)
+
+  wget -P "$tmpdir" "$keyring_pkg_url"{,.sig}
+  local archive=$(basename $keyring_pkg_url)
+  bsdtar -C "$tmpdir" -xvJf "$tmpdir/$archive"
+
+  local prefix="$tmpdir/usr/share/pacman/keyrings"
+  trustfile="$prefix/archlinux-trusted"
+  revokefile="$prefix/archlinux-revoked"
+  keyringfile="$prefix/archlinux.gpg"
+}
+
+verify_keyring_package () {
+  local nopk=0
+  local pkey=
+
+  while read -r line; do
+    echo "$line"
+    line="${line/gpg:/}"
+    if echo "$line" | grep -q "using ... key "; then
+      pkey=$(echo ${line/using [a-zA-Z0-9]* key /})
+      echo "Signing key is $pkey"
+    fi
+    if echo "$line" | grep -q "No public"; then
+      echo "Public key not available"
+      nopk=1
+    fi
+  done < <(
+    GPG --verify --batch "$tmpdir/*.sig" \
+      "$tmpdir/*.xz"  2>&1
+    )
+
+  if [[ -z "$pkey" ]]; then
+    echo "Cannot identify signing key"
+    exit 1
+  fi
+   
+  # It would be alarming, if the signing key is not contained in the package's keyring,
+  if (( nopk )) && [[ -n pkey ]]; then
+    echo "Signing key not contained in keyring package. This is alarming."
+    exit 1
+  #  echo "Downloading key: $pkey"
+  #  GPG --receive-key ${pkey: -16}
+  fi
+  echo
+  GPG --list-sigs "${pkey: -16}"
+}
+
+if ! [[ -d "$gpgdir" ]]; then
+  mkdir -p "$gpgdir"
+  chmod 700 "$gpgdir"
+  generate_master_key
+fi
+
+get_keyring_package
+GPG --import "$keyringfile"
+echo
+verify_keyring_package
+
+cat "$trustfile" | sort | cut -d":" -f1 > "$tmpdir/packaged_keys"
+
+git clone https://git.archlinux.org/archlinux-keyring.git "$tmpdir/git-checkout"
+echo
+
+echo "Master keys listed in archlinux-keyring package:"
+cat "$tmpdir/packaged_keys" | show_keys 
+echo
+
+cat "$tmpdir/git-checkout/archlinux-trusted" | sort | cut -d":" -f1 > "$tmpdir/keys-from-git"
+echo "Master keys according to git.archlinux.org/archlinux-keyring.git:"
+cat "$tmpdir/keys-from-git" | show_keys
+echo
+
+webkeys | sort | cut -d"|" -f1 | tr -d ' ' > "$tmpdir/keys-from-website"
+echo "Master keys listed on official website:"
+webkeys | sort 
+echo
+
+pushd "$tmpdir" > /dev/null
+diff -ws --to-file packaged_keys keys-from-git keys-from-website
+popd > /dev/null
+echo
+
+echo "Please sign the master keys"
+while IFS=: read key_id _; do
+  # skip blank lines, comments; these are valid in this file
+  [[ -z "$key_id" || "${key_id:0:1}" = \# ]] && continue
+  GPG --lsign-key "$key_id"
+done < "$trustfile"
+echo
+
+if [[ -s "$revokefile" ]]; then
+  echo "Disabling revoked keys"
+  while read -r key_id; do
+		printf 'disable\nquit\n' | GPG --command-fd 0 --quiet --batch --edit-key "$key_id"
+  done < "$revokefile"
+fi
+
+GPG --import-ownertrust "$trustfile"
+echo
+
+GPG --verify "$tmpdir/*.sig" "$tmpdir/*.xz"
+echo
+echo "Signature verification was set up successfully!"
