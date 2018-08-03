@@ -1,0 +1,42 @@
+#!/usr/bin/bash
+set -eu -o pipefail
+bindir=$( (cd "$(dirname "$0")" && pwd) )
+extract="$bindir/ssb-pacman-extract"
+
+if [[ $# -lt 1 ]]; then
+  echo "Usage: $0 ROOT"
+  exit 1
+fi
+root="$1"
+
+mkdir -p "$root"
+
+# TODO: get pacman-deps
+cat pacman-deps | cut -d" " -f3 | xargs -n 1 sh -c '"'$extract'" "$0" "'$root'" || exit 255'
+
+# then install pacman itself
+"$extract" "%znSz0++uDsr2q0ukmkltIxi3ZxmerngQPVvBZyG65mU=.sha256" "$root"
+
+sudo cp -r ~/.ssb-pacman/gpg "$root"/etc/pacman.d/gnupg
+sudo arch-chroot "$root" chown -R root:root /etc/pacman.d/gnupg
+
+# TODO: Why exactly do we need this?
+sudo arch-chroot $root /usr/bin/pacman-key --init
+
+# set up the post-transaction hook
+sudo mkdir -p "$root/etc/pacman.d/hooks/"
+sudo cp "$bindir/../pacman-hook/99-add-ssb-key.hook" "$root/etc/pacman.d/hooks/"
+# TODO: where to put this?
+sudo cp "$bindir"/../pacman-hook/ssb-pacman-add-key "$root" 
+sudo cp "$bindir"/ssb-pacman-shrinkwrap "$root" 
+
+# re-install pacman
+# This executes .INSTALL scripts and our
+# post-transaction hook, needed for
+# creating a shrinkwrap file.
+"$bindir"/ssb-pacman-install pacman "$root"
+echo
+echo == Shrinkwrap ==
+echo
+sudo arch-chroot "$root" /ssb-pacman-shrinkwrap
+echo "== DONE =="

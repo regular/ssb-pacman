@@ -1,0 +1,46 @@
+#!/usr/bin/bash
+set -eu -o pipefail
+
+if [[ ! -d $2 ]]; then
+  echo "Usage %msgid ROOT"
+  exit 1
+fi
+root="$2"
+
+gpgdir="$HOME/.ssb-pacman/gpg"
+gpg="gpg --homedir $gpgdir"
+
+key="$1"
+read -r pkg_url name arch < <(sbot pacman.get "$key" | jsonpath-dl url content.name content.arch)
+
+tmpdir="$(mktemp -d)"
+wget -P "$tmpdir" "$pkg_url"{,.sig}
+archive="$(basename "$pkg_url")"
+echo
+
+$gpg --verify "$tmpdir/$archive.sig" "$tmpdir/$archive"
+echo
+echo "Package signature is ok, unpacking ..."
+echo
+mkdir "$tmpdir/root"
+# TODO: do we need the -p flag here?
+# it fails with 'unable to set file flags' even for superuser
+bsdtar -C "$tmpdir/root" -xvJf "$tmpdir/$archive"
+echo
+
+src="$tmpdir/root/*"
+if ls $src; then
+  cp -afr $src "$root"
+else
+  echo "Nothing to copy"
+fi
+
+if [[ -s "$tmpdir/root/.INSTALL" ]]; then
+  {
+    echo "# This installer ignores the following install scripts for package"
+    echo "# $name $arch $key"
+    echo
+    cat "$tmpdir/root/.INSTALL"
+  } | less
+fi
+rm -rf "$tmpdir"
