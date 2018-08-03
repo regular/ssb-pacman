@@ -1,5 +1,6 @@
 #!/usr/bin/bash
 set -eu -o pipefail
+export ssb_appname=ssb-pacman
 
 if [[ ! -d $2 ]]; then
   echo "Usage %msgid ROOT"

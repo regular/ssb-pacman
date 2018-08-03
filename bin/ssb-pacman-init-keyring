@@ -1,5 +1,6 @@
 #!/usr/bin/bash
 set -eu -o pipefail
+export ssb_appname=ssb-pacman
 
 gpgdir="$HOME/.ssb-pacman/gpg"
 plugindir="$HOME/.ssb-pacman/node_modules/ssb-pacman"

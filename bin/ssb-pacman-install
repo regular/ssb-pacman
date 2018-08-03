@@ -1,5 +1,7 @@
 #!/usr/bin/bash
 set -eux
+export ssb_appname=ssb-pacman
+
 if [[ ! -d $2 ]]; then
   echo "Usage package-name ROOT"
   exit 1
