@@ -39,8 +39,8 @@ show_keys () {
 }
 
 get_keyring_package () {
-  # TODO: sort and pick latest
-  local keyring_pkg_url=$(sbot pacman.versions archlinux-keyring --arch x86_64 | jsonpath-dl url)
+  # get latest version of keyring
+  local keyring_pkg_url=$(sbot pacman.versions archlinux-keyring --arch x86_64  --sort | jsonpath-dl url | head -n1)
 
   wget -P "$tmpdir" "$keyring_pkg_url"{,.sig}
   local archive=$(basename $keyring_pkg_url)

@@ -273,7 +273,10 @@ exports.init = function (ssb, config) {
       index.read(Object.assign({}, opts, {gt, lt, values: true, keys: true, seqs: false} )),
       pull.through( i => i.index = parseNAVRKey(i.key) ),
       pull.unique( i => i.index.sha256 ),
-      pull.through( makeStdRecord ) 
+      pull.through( makeStdRecord ),
+      opts.sort ? 
+        sort( (a, b) => vercmp(b.record.VERSION, a.record.VERSION) ) // newest first
+        :pull.through()
     )
   }
 
