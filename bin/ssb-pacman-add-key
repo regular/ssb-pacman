@@ -1,0 +1,13 @@
+#!/usr/bin/bash
+set -eu -o pipefail
+
+gpgdir="$HOME/.ssb-pacman/gpg"
+
+if (( $# < 1 )); then
+  echo "Usage: $0 you@domain.com (identifying your pgp key)"
+  exit 1
+fi
+
+gpg --export "$1" | gpg --homedir "$gpgdir" --import
+gpg --homedir "$gpgdir" --lsign "$1"
+
