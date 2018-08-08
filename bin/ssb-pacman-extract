@@ -12,7 +12,7 @@ gpgdir="$HOME/.ssb-pacman/gpg"
 gpg="gpg --homedir $gpgdir"
 
 key="$1"
-read -r pkg_url name arch < <(sbot pacman.get "$key" | jsonpath-dl url content.name content.arch)
+read -r pkg_url name arch < <(sbot pacman.get "$key" --arch "$(uname -m)"| jsonpath-dl url content.name content.arch)
 
 tmpdir="$(mktemp -d)"
 wget -P "$tmpdir" "$pkg_url"{,.sig}

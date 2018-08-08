@@ -1,5 +1,5 @@
 #!/usr/bin/bash
-set -eu -o pipefail
+set -eux -o pipefail
 export ssb_appname=ssb-pacman
 bindir=$( (cd "$(dirname "$0")" && pwd) )
 extract="$bindir/ssb-pacman-extract"
@@ -25,11 +25,14 @@ extract_pacman_and_deps () {
 mkdir -p "$root"
 extract_pacman_and_deps
 
+# Copy ssb-pacman keyring
 sudo cp -r ~/.ssb-pacman/gpg "$root"/etc/pacman.d/gnupg
 sudo arch-chroot "$root" chown -R root:root /etc/pacman.d/gnupg
-
 # TODO: Why exactly do we need this?
 sudo arch-chroot "$root" /usr/bin/pacman-key --init
+
+# Enable a locale to be generated
+sudo echo "en_US.UTF-8 UTF-8" > "$root/etc/locale.gen"
 
 # set up the post-transaction hook
 sudo mkdir -p "$root/etc/pacman.d/hooks/"
@@ -38,11 +41,15 @@ sudo cp "$bindir/../pacman-hook/99-add-ssb-key.hook" "$root/etc/pacman.d/hooks/"
 sudo cp "$bindir"/../pacman-hook/ssb-pacman-add-key "$root" 
 sudo cp "$bindir"/ssb-pacman-shrinkwrap "$root" 
 
-# re-install pacman
+# re-install pacman (as part of the base group)
 # This executes .INSTALL scripts and our
 # post-transaction hook, needed for
 # creating a shrinkwrap file.
-"$bindir"/ssb-pacman-install pacman "$root"
+"$bindir"/ssb-pacman-install base "$root"
+
+# create the locale
+sudo arch-chroot "$root" /usr/bin/bash -c 'locale-gen && locale'
+
 echo
 echo == Shrinkwrap ==
 echo
