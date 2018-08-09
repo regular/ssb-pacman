@@ -86,14 +86,22 @@ module.exports = function(ssb) {
         let size = 0, contentLength
         debug(`downloading ${content.url} ...`)
         pull(
-          toPull.source(hyperquest(content.url, (err, res)=>{
-            if (err) {
-              console.error('http error: ', err.message)
+          (function() {
+            if (content.url.startsWith('file://')) {
+              const filename = content.url.substr('file://'.length)
+              contentLength = fs.statSync(filename).size
+              return toPull.source(fs.createReadStream(filename))
+            } else {
+              return toPull.source(hyperquest(content.url, (err, res)=>{
+                if (err) {
+                  console.error('http error: ', err.message)
+                }
+                if (res) {
+                  contentLength = Number(res.headers['content-length'])
+                }
+              }))
             }
-            if (res) {
-              contentLength = Number(res.headers['content-length'])
-            }
-          })),
+          })(),
           pull.through( b => {
             size += b.length
             console.log(`${size} / ${contentLength}`)

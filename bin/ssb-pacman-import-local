@@ -1,0 +1,21 @@
+#!/usr/bin/bash
+set -eux -o pipefail
+
+if [ $# -lt 3 ]; then
+  echo "Usage: $0 ARCH REPO PACKAGEFILE"
+fi
+
+export ssb_appname=ssb-pacman
+tmp="$(mktemp -d)"
+arch="$1"
+repo="$2"
+pkgfile="$3"
+dbfile="$tmp/$arch-$repo.db.tar.gz"
+
+repo-add "$dbfile" "$pkgfile"
+
+rm -rf $tmp/$arch-$repo || true
+mkdir -p $tmp/$arch-$repo
+tar -xz -C $tmp/$arch-$repo -f "$dbfile"
+cp "$pkgfile" "$tmp"
+sbot pacman.import $(realpath $tmp/$arch-$repo) --arch "$arch" --repo "$repo" --url "file://$tmp"
