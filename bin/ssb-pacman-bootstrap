@@ -11,28 +11,41 @@ fi
 root="$1"
 
 tmpdir=$(mktemp -d)
-depfile="$tmpdir/pacman-deps"
+
+# taken from arch-bootstrap
+configure_minimal_system() {
+  sudo mkdir -p "$root/dev"
+  sudo touch "$root/etc/group"
+  echo "bootstrap" | sudo tee "$root/etc/hostname"
+
+  local ADDR=$(sbot pacman.getAddress|tr -d \" | sed "s/localhost/127.0.0.1/")
+  cat pacman.conf.in | sed "s|\(Server[[:space:]]*=\).*|\1 $ADDR|" | sudo tee "$root/etc/pacman.conf"
+  sudo arch-chroot "$root" bash -c 'pacman -Sy'
+}
+
 
 extract_pacman_and_deps () {
   pacman_id=$(sbot pacman.versions pacman --arch x86_64 --sort | jsonpath-dl key | head -n1)
   echo "Extracting" "$(sbot pacman.get "$pacman_id" | jsonpath-dl content.name)" "..."
-  sbot pacman.dependencies "$pacman_id" --transitive --sort | jsonpath-dl key content.name record.DESC | tee "$depfile"
-  cat "$depfile" | cut -d" " -f1 | xargs -n 1 sh -c '"'$extract'" "$0" "'$root'" || exit 255'
-  # then install pacman itself
+  sbot pacman.dependencies "$pacman_id" --transitive --sort | \
+    jsonpath-dl key content.name record.DESC | \
+    cut -d" " -f1 | xargs -n 1 sh -c '"'$extract'" "$0" "'$root'" || exit 255'
+  # then extract pacman itself
   "$extract" "$pacman_id" "$root"
 }
 
 mkdir -p "$root"
 extract_pacman_and_deps
-
+sudo chown -R root:root "$root"
 # Copy ssb-pacman keyring
 sudo cp -r ~/.ssb-pacman/gpg "$root"/etc/pacman.d/gnupg
 sudo arch-chroot "$root" chown -R root:root /etc/pacman.d/gnupg
+
 # TODO: Why exactly do we need this?
 sudo arch-chroot "$root" /usr/bin/pacman-key --init
 
 # Enable a locale to be generated
-sudo echo "en_US.UTF-8 UTF-8" > "$root/etc/locale.gen"
+sudo echo "en_US.UTF-8 UTF-8" | sudo tee "$root/etc/locale.gen"
 
 # set up the post-transaction hook
 sudo mkdir -p "$root/etc/pacman.d/hooks/"
@@ -41,14 +54,20 @@ sudo cp "$bindir/../pacman-hook/99-add-ssb-key.hook" "$root/etc/pacman.d/hooks/"
 sudo cp "$bindir"/../pacman-hook/ssb-pacman-add-key "$root" 
 sudo cp "$bindir"/ssb-pacman-shrinkwrap "$root" 
 
+configure_minimal_system
+
 # re-install pacman (as part of the base group)
 # This executes .INSTALL scripts and our
 # post-transaction hook, needed for
 # creating a shrinkwrap file.
-"$bindir"/ssb-pacman-install base "$root"
+#"$bindir"/ssb-pacman-install base "$root"
+sudo arch-chroot "$root" bash -c 'pacman -S base --noconfirm --force'
 
 # create the locale
 sudo arch-chroot "$root" /usr/bin/bash -c 'locale-gen && locale'
+
+# set root password
+sudo arch-chroot "$root" bash -c 'echo -e "bootstrap\nbootstrap\n" | passwd'
 
 echo
 echo == Shrinkwrap ==

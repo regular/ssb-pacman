@@ -36,6 +36,8 @@ else
   echo "Nothing to copy"
 fi
 
+exit 0 # skip the message
+
 if [[ -s "$tmpdir/root/.INSTALL" ]]; then
   {
     echo "# This installer ignores the following install scripts for package"
