@@ -2,6 +2,9 @@
   "name": "ssb-pacman",
   "version": "1.0.0",
   "description": "",
+  "bin": {
+    "ssb-pacman": "bin/ssb-pacman"
+  },
   "scripts": {
     "test": "tape test/**.js"
   },

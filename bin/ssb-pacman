@@ -1,0 +1,4 @@
+#!/usr/bin/bash
+set -eu -o pipefail
+
+echo $(realpath $0)
