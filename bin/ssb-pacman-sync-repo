@@ -16,7 +16,8 @@ lockfile=$cache/$arch-$repo.lock
 # See https://unix.stackexchange.com/questions/57940/trap-int-term-exit-really-necessary
 cleanup() {
   err=$?
-  rm $lockfile
+  rm "$lockfile"
+  rm -rf "$tmp"
   trap '' EXIT INT TERM
   exit $err
 }

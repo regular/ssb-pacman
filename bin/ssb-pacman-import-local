@@ -14,8 +14,9 @@ dbfile="$tmp/$arch-$repo.db.tar.gz"
 
 repo-add "$dbfile" "$pkgfile"
 
-rm -rf $tmp/$arch-$repo || true
-mkdir -p $tmp/$arch-$repo
-tar -xz -C $tmp/$arch-$repo -f "$dbfile"
+rm -rf "$tmp/$arch-$repo" || true
+mkdir -p "$tmp/$arch-$repo"
+tar -xz -C "$tmp/$arch-$repo" -f "$dbfile"
 cp "$pkgfile" "$tmp"
-sbot pacman.import $(realpath $tmp/$arch-$repo) --arch "$arch" --repo "$repo" --url "file://$tmp"
+sbot pacman.import $(realpath "$tmp/$arch-$repo") --arch "$arch" --repo "$repo" --url "file://$tmp"
+rm -rf "$tmp"

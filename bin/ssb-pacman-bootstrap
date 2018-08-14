@@ -10,8 +10,6 @@ if [[ $# -lt 1 ]]; then
 fi
 root="$1"
 
-tmpdir=$(mktemp -d)
-
 # taken from arch-bootstrap
 configure_minimal_system() {
   sudo mkdir -p "$root/dev"

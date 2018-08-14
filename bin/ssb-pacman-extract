@@ -36,6 +36,8 @@ else
   echo "Nothing to copy"
 fi
 
+rm -rf "$tmpdir"
+
 exit 0 # skip the message
 
 if [[ -s "$tmpdir/root/.INSTALL" ]]; then
@@ -46,4 +48,3 @@ if [[ -s "$tmpdir/root/.INSTALL" ]]; then
     cat "$tmpdir/root/.INSTALL"
   } | less
 fi
-rm -rf "$tmpdir"

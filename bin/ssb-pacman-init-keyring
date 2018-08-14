@@ -144,3 +144,4 @@ echo
 GPG --verify "$tmpdir/*.sig" "$tmpdir/*.xz"
 echo
 echo "Signature verification was set up successfully!"
+rm -rf "$tmpdir"
