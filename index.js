@@ -27,6 +27,7 @@ exports.manifest = {
   getAddress: 'sync',
   updates: 'source',
   dependencies: 'source',
+  members: 'source',
   providers: 'source',
   candidates: 'source',
   sha256: 'async'
@@ -72,7 +73,7 @@ exports.init = function (ssb, config) {
   const ret = {}
   const importIfNew = ImportIfNew(ssb)
   const index = ssb._flumeUse('pacmanIndex', createIndex(
-    25, function(kv) {
+    26, function(kv) {
       const c = kv.value && kv.value.content
       const name = c && c.name
       const arch = c && c.arch
@@ -277,6 +278,18 @@ exports.init = function (ssb, config) {
       opts.sort ? 
         sort( (a, b) => vercmp(b.record.VERSION, a.record.VERSION) ) // newest first
         :pull.through()
+    )
+  }
+
+  ret.members = function(group, opts) {
+    opts = opts || {}
+    const {gt, lt} = query('GROUP', [
+      group, opts.arch
+    ])
+    return pull(
+      index.read(Object.assign({}, opts, {gt, lt, values: true, keys: true, seqs: false} )),
+      pull.through( i => i.index = parseGROUPKey(i.key) ),
+      pull.through( makeStdRecord ),
     )
   }
 
@@ -564,12 +577,23 @@ function makeDetailKeys(kv) {
       ]
     })
 
+    const groups = ary(p.GROUPS || []).map( g => {
+      return [
+        'GROUP', 
+        g,
+        arch, 
+        p.NAME,
+        p.VERSION
+      ]
+    })
+
     return [
       ['NAVR', p.NAME, arch, p.VERSION, repo, p.CSIZE, p.ISIZE, p.BUILDDATE, p.SHA256SUM],
       ['RAF', repo, arch, p.FILENAME],
       ['RANV', repo, arch, p.NAME, p.VERSION],
       ...deps,
-      ...provides
+      ...provides,
+      ...groups
     ]
 }
 
@@ -577,6 +601,13 @@ function parsePROVKey(k) {
   const [_, provision, arch, prov_version, name, version] = k
   return {
     provision, prov_version, arch, name, version
+  }
+}
+
+function parseGROUPKey(k) {
+  const [_, group, arch, name, version] = k
+  return {
+    group, arch, name, version
   }
 }
 
