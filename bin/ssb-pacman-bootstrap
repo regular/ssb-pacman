@@ -22,18 +22,21 @@ configure_minimal_system() {
 }
 
 
-extract_pacman_and_deps () {
-  pacman_id=$(sbot pacman.versions pacman --arch x86_64 --sort | jsonpath-dl key | head -n1)
-  echo "Extracting" "$(sbot pacman.get "$pacman_id" | jsonpath-dl content.name)" "..."
-  sbot pacman.dependencies "$pacman_id" --transitive --sort | \
+extract_package_with_deps () {
+  package="$1"
+  package_id=$(sbot pacman.versions ${package} --arch x86_64 --sort | jsonpath-dl key | head -n1)
+  echo "Extracting" "$(sbot pacman.get "$package_id" | jsonpath-dl content.name)" "..."
+  sbot pacman.dependencies "$package_id" --transitive --sort | \
     jsonpath-dl key content.name record.DESC | \
     cut -d" " -f1 | xargs -n 1 sh -c '"'$extract'" "$0" "'$root'" || exit 255'
-  # then extract pacman itself
-  "$extract" "$pacman_id" "$root"
+  # then extract package itself
+  "$extract" "$package_id" "$root"
 }
 
 mkdir -p "$root"
-extract_pacman_and_deps
+extract_package_with_deps pacman
+#extract_package_with_deps sed # needed by locale-gen
+extract_package_with_deps glibc # for character maps needed by localedef
 sudo chown -R root:root "$root"
 # Copy ssb-pacman keyring
 sudo cp -r ~/.ssb-pacman/gpg "$root"/etc/pacman.d/gnupg
@@ -42,17 +45,18 @@ sudo arch-chroot "$root" chown -R root:root /etc/pacman.d/gnupg
 # TODO: Why exactly do we need this?
 sudo arch-chroot "$root" /usr/bin/pacman-key --init
 
-# Enable a locale to be generated
-sudo echo "en_US.UTF-8 UTF-8" | sudo tee "$root/etc/locale.gen"
-
 # set up the post-transaction hook
 sudo mkdir -p "$root/etc/pacman.d/hooks/"
 sudo cp "$bindir/../pacman-hook/99-add-ssb-key.hook" "$root/etc/pacman.d/hooks/"
-# TODO: where to put this?
+# TODO: put these into /usr/bin
 sudo cp "$bindir"/../pacman-hook/ssb-pacman-add-key "$root" 
 sudo cp "$bindir"/ssb-pacman-shrinkwrap "$root" 
 
 configure_minimal_system
+
+sudo gunzip "$root/usr/share/i18n/charmaps/UTF-8.gz"
+sudo arch-chroot "$root" /usr/bin/bash -c 'localedef -i en_US -c -f UTF-8 -A /usr/share/locale/locale.alias en_US.UTF-8'
+echo "LANG=en_US.UTF-8" | sudo tee "${root}/etc/locale.conf"
 
 # re-install pacman (as part of the base group)
 # This executes .INSTALL scripts and our
@@ -61,8 +65,10 @@ configure_minimal_system
 #"$bindir"/ssb-pacman-install base "$root"
 sudo arch-chroot "$root" bash -c 'pacman -S base --noconfirm --force'
 
-# create the locale
+# (re-) create the locale
+echo "en_US.UTF-8 UTF-8" | sudo tee "$root/etc/locale.gen"
 sudo arch-chroot "$root" /usr/bin/bash -c 'locale-gen && locale'
+
 
 # set root password
 sudo arch-chroot "$root" bash -c 'echo -e "bootstrap\nbootstrap\n" | passwd'
