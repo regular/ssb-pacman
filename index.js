@@ -1,3 +1,11 @@
+/// MOVE THIS!
+//
+const blacklist = [
+  '%wy1x1G46UPcqpbsgldOCeMbfR5qyVa2U/TUvisAjAGI=.sha256'  // scuttlebot@12
+]
+
+
+
 const zlib = require('zlib')
 const crypto = require('crypto')
 const url = require('url')
@@ -40,6 +48,9 @@ function makeSyncDBStream(index, arch, repo) {
   pull(
     index.read({gt, lt, values: true, keys: true, seqs: true} ),
     //pull.through( console.log ),
+    pull.filter( kkv =>{
+      return !blacklist.includes(kkv.value.key)
+    }),
     sort( (a, b) => b.seq - a.seq),
     pull.unique( kkv => {
       const [_, repo, arch, name, version] = kkv.key
@@ -289,7 +300,7 @@ exports.init = function (ssb, config) {
     return pull(
       index.read(Object.assign({}, opts, {gt, lt, values: true, keys: true, seqs: false} )),
       pull.through( i => i.index = parseGROUPKey(i.key) ),
-      pull.through( makeStdRecord ),
+      pull.through( makeStdRecord )
     )
   }
 
