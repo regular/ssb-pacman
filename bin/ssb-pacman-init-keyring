@@ -33,6 +33,7 @@ webkeys () {
 show_keys () {
   {
     while read -r key; do
+      GPG --receive-keys "$key" 2>&1 > /dev/null
       GPG --with-colons --list-key "$key"
     done
   } | node "$plugindir/tools/parse-gpg.js"
@@ -110,7 +111,9 @@ echo
 
 cat "$tmpdir/git-checkout/archlinux-trusted" | sort | cut -d":" -f1 > "$tmpdir/keys-from-git"
 echo "Master keys according to git.archlinux.org/archlinux-keyring.git:"
+echo ---
 cat "$tmpdir/keys-from-git" | show_keys
+echo ---
 echo
 
 webkeys | sort | cut -d"|" -f1 | tr -d ' ' > "$tmpdir/keys-from-website"
