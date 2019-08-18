@@ -47,9 +47,8 @@ sudo arch-chroot "$root" /usr/bin/pacman-key --init
 # set up the post-transaction hook
 sudo mkdir -p "$root/etc/pacman.d/hooks/"
 sudo cp "$bindir/../pacman-hook/99-add-ssb-key.hook" "$root/etc/pacman.d/hooks/"
-# TODO: put these into /usr/bin
-sudo cp "$bindir"/../pacman-hook/ssb-pacman-add-key "$root" 
-sudo cp "$bindir"/ssb-pacman-shrinkwrap "$root" 
+sudo cp "$bindir"/../pacman-hook/ssb-pacman-add-key "$root/usr/bin" 
+sudo cp "$bindir"/ssb-pacman-shrinkwrap "$root/usr/bin" 
 
 configure_minimal_system
 
