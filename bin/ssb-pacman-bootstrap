@@ -76,5 +76,5 @@ sudo arch-chroot "$root" bash -c 'echo -e "bootstrap\nbootstrap\n" | passwd'
 echo
 echo == Shrinkwrap ==
 echo
-sudo arch-chroot "$root" /ssb-pacman-shrinkwrap
+sudo arch-chroot "$root" ssb-pacman-shrinkwrap
 echo "== DONE =="
