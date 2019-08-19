@@ -1,5 +1,10 @@
 #!/usr/bin/bash
 set -eu -o pipefail
 
-for p in $(pacman -Qe; do printf "%s explicit %s\n" $(cat /var/lib/pacman/local/$p/ssb-key) $p; done
-for p in $(pacman -Qd; do printf "%s dependency %s\n" $(cat /var/lib/pacman/local/$p/ssb-key) $p; done
+SAVEIFS="$IFS"
+IFS=$(echo -en "\n\b")
+
+for p in $(pacman -Qe); do printf '%s explicit %s\n'   $(cat /var/lib/pacman/local/$(echo "$p" | tr ' ' '-')/ssb-key) "$p"; done
+for p in $(pacman -Qd); do printf '%s dependency %s\n' $(cat /var/lib/pacman/local/$(echo "$p" | tr ' ' '-')/ssb-key) "$p"; done
+
+IFS="$SAVEIFS"
